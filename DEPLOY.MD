@@ -1,3 +1,5 @@
+IN PROGRESS
+
 # Deploying playground.dot
 
 A three-tab quest platform for the Web3 Summit Developer Lab — on-chain registry contract on Paseo Asset Hub + frontend bundle on Bulletin under `playground.dot`.
