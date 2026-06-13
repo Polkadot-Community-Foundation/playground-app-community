@@ -2,7 +2,11 @@ name: Deploy to Bulletin
 
 # Reusable workflow that uploads a built frontend artifact to Bulletin/IPFS
 # under a given DotNS domain. Callers (deploy-frontend.yml, release.yml)
-# build the artifact and pass the target domain.
+# build the artifact and pass the target domain + environment.
+#
+# Tool: @polkadot-community-foundation/polkadot-app-deploy (PCF fork of the
+# former `bulletin-deploy`). Ships built-in `paseo-next-v2` and `summit` envs.
+# See summit-deployer-skills/guides/BULLETIN_DEPLOY_MODEL.md.
 
 on:
   workflow_call:
@@ -15,6 +19,11 @@ on:
         description: "Name of the build artifact to download"
         required: true
         type: string
+      env:
+        description: "polkadot-app-deploy environment: paseo-next-v2 | summit"
+        required: false
+        type: string
+        default: paseo-next-v2
       environment:
         description: "GitHub Environment to gate the deploy on (e.g. 'production' for required reviewers)"
         required: false
@@ -26,14 +35,14 @@ on:
       runner:
         description: "Runner label"
         type: string
-        default: parity-default
+        default: ubuntu-latest
       publish:
-        description: "Publish to browse.dot"
+        description: "Publish to the Publisher registry (paseo only; Summit has no Publisher and ignores this)"
         type: boolean
         default: false
     secrets:
       mnemonic:
-        description: "Mnemonic for the DotNS domain owner"
+        description: "Mnemonic for the DotNS domain owner / Bulletin uploader (direct signer)"
         required: true
     outputs:
       cid:
@@ -52,12 +61,26 @@ jobs:
     environment: ${{ inputs.environment }}
     outputs:
       cid: ${{ steps.deploy.outputs.cid }}
-      # bulletin-deploy strips `.dot` from its `domain` output (returns the bare
+      # The CLI strips `.dot` from its `domain` output (returns the bare
       # label). Surface the caller's input instead so downstream consumers get
       # the full `<name>.dot` form they passed in.
       domain: ${{ inputs.dotns-domain }}
       url: ${{ steps.url.outputs.url }}
     steps:
+      # Checkout FIRST (it git-cleans the workspace). The repo carries
+      # polkadot-app-deploy.config.ts (product manifest: display name, icon,
+      # app executable) + assets/. The CLI auto-discovers the config by name,
+      # walking up from the build dir, so it must sit at the repo root next to
+      # ./dist for the manifest to publish alongside the contenthash.
+      - name: Fetch deploy config
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            polkadot-app-deploy.config.ts
+            assets
+          sparse-checkout-cone-mode: false
+
+      # Download AFTER checkout so the artifact survives checkout's clean.
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
@@ -69,29 +92,8 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Restore Kubo from cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/kubo
-          key: kubo-v0.33.0-linux-amd64
-
-      - name: Setup IPFS Kubo
-        run: |
-          if [ ! -f ~/.cache/kubo/ipfs ]; then
-            mkdir -p ~/.cache/kubo
-            curl -fsSL -o /tmp/kubo.tar.gz https://dist.ipfs.tech/kubo/v0.33.0/kubo_v0.33.0_linux-amd64.tar.gz
-            tar -xf /tmp/kubo.tar.gz -C /tmp
-            cp /tmp/kubo/ipfs ~/.cache/kubo/ipfs
-            rm -rf /tmp/kubo /tmp/kubo.tar.gz
-          fi
-          sudo cp ~/.cache/kubo/ipfs /usr/local/bin/ipfs
-          ipfs version
-
-      - name: Initialize IPFS
-        run: ipfs init
-
-      - name: Install bulletin-deploy
-        run: npm install -g bulletin-deploy
+      - name: Install polkadot-app-deploy
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.10.1
 
       - name: Deploy to Bulletin
         id: deploy
@@ -100,7 +102,17 @@ jobs:
           timeout_minutes: 15
           max_attempts: ${{ inputs.max-retries }}
           retry_wait_seconds: 30
-          command: bulletin-deploy './dist' --env paseo-next-v2 ${{ inputs.publish && '--publish' || '' }} '${{ inputs.dotns-domain }}'
+          # --mnemonic = direct signer (required on Summit; --suri/pool is the
+          #   unauthorized public dev phrase). --js-merkle skips the Kubo
+          #   download. --publish only on non-summit (Summit has no Publisher).
+          command: >-
+            APP_DOTNS_DOMAIN='${{ inputs.dotns-domain }}'
+            polkadot-app-deploy './dist'
+            --env '${{ inputs.env }}'
+            --mnemonic "$MNEMONIC"
+            --js-merkle
+            ${{ (inputs.publish && inputs.env != 'summit') && '--publish' || '' }}
+            '${{ inputs.dotns-domain }}'
         env:
           MNEMONIC: ${{ secrets.mnemonic }}
           NODE_OPTIONS: "--max-old-space-size=8192"
@@ -121,6 +133,7 @@ jobs:
           {
             echo "### ${{ inputs.dotns-domain }}"
             echo
+            echo "Env &nbsp; \`${{ inputs.env }}\`"
             echo "Browser &nbsp; ${{ steps.url.outputs.url }}"
             echo "Desktop &nbsp; \`${{ inputs.dotns-domain }}\`"
             echo "CID &nbsp; \`${{ steps.deploy.outputs.cid }}\`"

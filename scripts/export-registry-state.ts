@@ -262,7 +262,10 @@ interface Snapshot {
 // Returns both in a single fetch so we never double-fetch the same CID.
 // On any fetch / parse failure we default to safe values — losing a moddable
 // bit per migration is a re-publish away from being correctable.
-const BULLETIN_GATEWAY = "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs";
+// Defaults to Paseo Next v2; override with `BULLETIN_GATEWAY_URL` for Summit
+// (`https://summit-ipfs.polkadot.io/ipfs`) — same env name as cleanup-e2e-leaks.ts.
+const BULLETIN_GATEWAY =
+  process.env.BULLETIN_GATEWAY_URL ?? "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs";
 const METADATA_FETCH_TIMEOUT_MS = 10_000;
 const SOURCE_DOMAIN_KEYS = ["modded_from", "moddedFrom", "source", "modSource"] as const;
 

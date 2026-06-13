@@ -23,9 +23,9 @@ on:
                 description: "Runner label"
                 type: choice
                 options:
-                    - parity-default
                     - ubuntu-latest
-                default: parity-default
+                    - parity-default
+                default: ubuntu-latest
 
 permissions:
     contents: read
@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
     build:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Build
         steps:
             # For workflow_run events, check out latest main to include any
@@ -84,24 +84,26 @@ jobs:
                   retention-days: 1
 
     domain:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Determine domain
         outputs:
             domain: ${{ steps.compute.outputs.domain }}
         steps:
+            # PRs get an ephemeral preview on Paseo. main (workflow_run) and
+            # manual dispatch deploy production to Summit `playground.dot`.
             - name: Compute domain
               id: compute
               run: |
                   if [[ "${{ github.event_name }}" == "pull_request" ]]; then
                     echo "domain=pr-${{ github.event.pull_request.number }}-playgroundtest.dot" >> "$GITHUB_OUTPUT"
                   else
-                    echo "domain=playgroundtest.dot" >> "$GITHUB_OUTPUT"
+                    echo "domain=playground.dot" >> "$GITHUB_OUTPUT"
                   fi
 
     comment-deploying:
         needs: [build, domain]
         if: github.event_name == 'pull_request'
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Deploying
         steps:
             - name: Comment deployment in progress
@@ -124,8 +126,12 @@ jobs:
         with:
             dotns-domain: ${{ needs.domain.outputs.domain }}
             artifact-name: frontend-build
+            # PR previews → Paseo; main/dispatch → Summit production.
+            env: ${{ github.event_name == 'pull_request' && 'paseo-next-v2' || 'summit' }}
         secrets:
-            mnemonic: ${{ secrets.E2E_FUNDER_SEED }}
+            # PR previews use the Paseo funder; production uses the Summit
+            # uploader / playground.dot owner (5Fk8…).
+            mnemonic: ${{ github.event_name == 'pull_request' && secrets.E2E_FUNDER_SEED || secrets.MNEMONIC }}
 
     publish-metadata:
         needs: [build, deploy]
@@ -137,7 +143,7 @@ jobs:
         # Bulletin upload path.
         # if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch')
         if: false
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Publish Metadata
         steps:
             - name: Checkout repository
@@ -170,7 +176,7 @@ jobs:
     comment-success:
         needs: deploy
         if: github.event_name == 'pull_request' && success()
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Success
         steps:
             - name: Comment on PR
@@ -202,7 +208,7 @@ jobs:
     comment-failure:
         needs: [build, deploy]
         if: github.event_name == 'pull_request' && failure()
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Failure
         steps:
             - name: Comment on PR

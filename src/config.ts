@@ -14,6 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Chain preset passed to `getChainAPI` for the *standalone* (non-host) boot
+// path. When the SPA runs inside a Polkadot host (Desktop/Browser) the host
+// injects the active network — on Summit that is Summit Asset Hub — so this
+// const does not gate the in-host network. It still selects the preset for a
+// plain-browser/gateway view and the `paseo_asset_hub` typed descriptor.
+// NOTE (Summit): left as "paseo" deliberately — `@parity/product-sdk-chain-client`
+// must expose a Summit/w3s preset before this can flip without breaking the
+// typed client. Verify against an installed product-sdk on the deploy VM; the
+// in-host Summit path is unaffected. See the Summit VM runbook.
 export const CHAIN = "paseo" as const;
 
 // `import.meta.env` is Vite-only — undefined when this file is imported from a
