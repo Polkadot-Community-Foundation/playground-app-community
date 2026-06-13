@@ -105,7 +105,7 @@ async function reloadIntoMyApps(testHost: import("@parity/host-api-test-sdk/play
 // and reappear in browse when set back to Public.
 test.describe("My Apps view — visibility workflow", () => {
   // FIXME — uses Node-side `publishDomain` which routes through
-  // BulletinClient.create({ environment: "paseo" }), and that client
+  // BulletinClient.create({ environment: "summit" }), and that client
   // requires a host transport (chain-client internally). In Node, it
   // throws `Host provider unavailable for chain`. Per TESTING_PLAN.md
   // §Relocations, this test is slated to move to Layer (d) component

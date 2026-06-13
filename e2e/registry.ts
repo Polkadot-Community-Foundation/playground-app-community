@@ -46,6 +46,13 @@ import {
   REPUTATION_CONTRACT,
 } from "../src/utils/contractManifest.js";
 
+// product-sdk client environment for Bulletin/cloud-storage. Summit is the
+// production target; override with PRODUCT_SDK_ENV=paseo for Paseo runs.
+// NOTE: "summit" requires a product-sdk build that ships a Summit env — until
+// then CloudStorageClient.create will reject it. See the e2e Summit blockers
+// in PLAYGROUND_SUMMIT_VM_RUNBOOK.
+const PRODUCT_SDK_ENV = (process.env.PRODUCT_SDK_ENV ?? "summit") as "paseo" | "summit";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cdmJsonSnapshot = JSON.parse(
   readFileSync(join(__dirname, "..", "cdm.json"), "utf-8"),
@@ -215,7 +222,7 @@ export async function publishDomain(
   const metadataCid = (await calculateCid(metadataBytes)).toString();
 
   const acct = getSignerKeypair();
-  const bulletin = await CloudStorageClient.create({ environment: "paseo", signer: acct.signer });
+  const bulletin = await CloudStorageClient.create({ environment: PRODUCT_SDK_ENV, signer: acct.signer });
   try {
     // store(...).send() submits a signed `TransactionStorage.store` extrinsic
     // and requires the signer to be authorized on the Bulletin Chain

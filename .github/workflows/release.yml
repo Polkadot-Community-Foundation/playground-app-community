@@ -123,6 +123,12 @@ jobs:
 
     publish-metadata:
         needs: deploy
+        # DISABLED (matches deploy-frontend.yml): publish-metadata.ts is a manual
+        # step. It uses the paseo_bulletin descriptor + bulletin-sdk built against
+        # Paseo metadata and is blocked in CI on product-sdk#102. Run it by hand
+        # on the VM per PLAYGROUND_SUMMIT_VM_RUNBOOK §8. Re-enable once the SDK
+        # exposes a Node-callable Summit Bulletin path.
+        if: false
         runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Publish Metadata
         steps:
@@ -152,6 +158,9 @@ jobs:
                   command: pnpm tsx scripts/publish-metadata.ts "$RELEASE_DOMAIN"
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
+                  # Summit endpoints (the release path deploys to Summit).
+                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
+                  BULLETIN_WS_URL: wss://summit-bulletin-rpc.polkadot.io
                   NODE_OPTIONS: "--max-old-space-size=8192"
 
     github-release:

@@ -18,9 +18,14 @@ on:
                     - ubuntu-latest
                 default: ubuntu-latest
     pull_request:
-    # Daily at 06:00 UTC — catches Paseo regressions and signer balance drift
-    schedule:
-        - cron: "0 6 * * *"
+    # Nightly schedule DISABLED while the suite targets Summit: e2e is red until
+    # the Summit blockers clear (product-sdk Summit env, host-api-test-sdk
+    # SUMMIT_ASSET_HUB fixture, @w3s/playground-registry deployed, funder
+    # Bulletin auth — see PLAYGROUND_SUMMIT_VM_RUNBOOK §12). Leaving the cron on
+    # would make `auto-file-failure` open a GitHub issue every night. Re-enable
+    # once e2e can go green on Summit.
+    # schedule:
+    #     - cron: "0 6 * * *"
 
 permissions:
     contents: read

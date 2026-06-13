@@ -31,7 +31,7 @@ import {
 //   - re-publishing the same domain failing or returning stale metadata.
 test.describe("unpublish flow (contract-level)", () => {
   // FIXME — uses Node-side `publishDomain` which routes through
-  // BulletinClient.create({ environment: "paseo" }), and that client
+  // BulletinClient.create({ environment: "summit" }), and that client
   // requires a host transport (chain-client internally). In Node, it
   // throws `Host provider unavailable for chain`. Per TESTING_PLAN.md
   // §Relocations, this test is slated to move to Layer (b) — same
