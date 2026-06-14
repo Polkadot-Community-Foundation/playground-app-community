@@ -36,7 +36,7 @@ import { keccak256, utf8ToBytes, bytesToHex } from "@parity/product-sdk-utils";
 import { deriveH160, ss58Decode, toGenericSs58 } from "@parity/product-sdk-address";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { DEV_PHRASE } from "@polkadot-labs/hdkd-helpers";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
+import { summit_asset_hub } from "@parity/product-sdk-descriptors/summit-asset-hub";
 import { CHAIN, PLAYGROUND_DOTNS_ID } from "../config.ts";
 import cdmJson from "../../cdm.json" with { type: "json" };
 import {
@@ -162,10 +162,10 @@ if (import.meta.hot) {
 // cdm.json snapshot if the meta-registry call fails.
 // ---------------------------------------------------------------------------
 
-type PaseoChainClient = ChainClient<PresetChains<"paseo">>;
+type SummitChainClient = ChainClient<PresetChains<"summit">>;
 
 export interface ContractsReady {
-  client: PaseoChainClient;
+  client: SummitChainClient;
   registryAddress: string;
   registry: PlaygroundRegistryContract;
   reputation: ReputationContract;
@@ -193,7 +193,7 @@ export const contractsReady: Promise<ContractsReady> = (async () => {
     const manager = await ContractManager.fromLiveClient(
       cdmJson as unknown as CdmJson,
       client.raw.assetHub,
-      paseo_asset_hub,
+      summit_asset_hub,
       {
         defaultOrigin: getReadOrigin(),
         registryOrigin: getReadOrigin(),
