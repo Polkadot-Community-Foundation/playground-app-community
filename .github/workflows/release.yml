@@ -19,9 +19,9 @@ on:
                 description: "Runner label"
                 type: choice
                 options:
-                    - parity-default
                     - ubuntu-latest
-                default: parity-default
+                    - parity-default
+                default: ubuntu-latest
 
 permissions:
     contents: write   # for creating GitHub Release
@@ -45,7 +45,7 @@ jobs:
     # context. Other jobs read it directly from $RELEASE_DOMAIN inside their
     # shell commands.
     domain:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Resolve domain
         outputs:
             domain: ${{ env.RELEASE_DOMAIN }}
@@ -53,7 +53,7 @@ jobs:
             - run: echo "release domain = $RELEASE_DOMAIN"
 
     build:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Build
         steps:
             # workflow_dispatch inputs don't support pattern constraints
@@ -115,13 +115,21 @@ jobs:
         with:
             dotns-domain: ${{ needs.domain.outputs.domain }}
             artifact-name: frontend-build
+            env: summit
+            # publish is ignored on Summit (no Publisher); kept for non-summit reuse.
             publish: true
         secrets:
             mnemonic: ${{ secrets.MNEMONIC }}
 
     publish-metadata:
         needs: deploy
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        # DISABLED (matches deploy-frontend.yml): publish-metadata.ts is a manual
+        # step. It uses the paseo_bulletin descriptor + bulletin-sdk built against
+        # Paseo metadata and is blocked in CI on product-sdk#102. Run it by hand
+        # on the VM per PLAYGROUND_SUMMIT_VM_RUNBOOK §8. Re-enable once the SDK
+        # exposes a Node-callable Summit Bulletin path.
+        if: false
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Publish Metadata
         steps:
             - name: Checkout repository
@@ -150,11 +158,14 @@ jobs:
                   command: pnpm tsx scripts/publish-metadata.ts "$RELEASE_DOMAIN"
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
+                  # Summit endpoints (the release path deploys to Summit).
+                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
+                  BULLETIN_WS_URL: wss://summit-bulletin-rpc.polkadot.io
                   NODE_OPTIONS: "--max-old-space-size=8192"
 
     github-release:
         needs: deploy
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: GitHub Release
         steps:
             - name: Create GitHub Release

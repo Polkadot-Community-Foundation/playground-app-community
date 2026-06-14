@@ -44,10 +44,13 @@ import pkg from "../package.json";
 import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.ts";
 import { assetHubWsUrl } from "./_lib.ts";
 
-// Paseo Next v2 Bulletin chain WS endpoint. cdm.json's `bulletin` field is
-// the IPFS gateway URL (https), not the chain WS — and `BULLETIN_RPCS` from
-// `@parity/product-sdk-host` isn't a direct dep here, so it's hardcoded.
-const BULLETIN_WS_URL = "wss://paseo-bulletin-next-rpc.polkadot.io";
+// Bulletin chain WS endpoint. cdm.json's `bulletin` field is the IPFS gateway
+// URL (https), not the chain WS — and `BULLETIN_RPCS` from
+// `@parity/product-sdk-host` isn't a direct dep here, so the default is pinned.
+// Defaults to Paseo Next v2; override with `BULLETIN_WS_URL` for Summit
+// (`wss://summit-bulletin-rpc.polkadot.io`) — mirrors `ASSET_HUB_WS_URL`.
+const BULLETIN_WS_URL =
+  process.env.BULLETIN_WS_URL ?? "wss://paseo-bulletin-next-rpc.polkadot.io";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 

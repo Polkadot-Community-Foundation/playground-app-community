@@ -1,10 +1,81 @@
-IN PROGRESS
-
 # Deploying playground.dot
 
-A three-tab quest platform for the Web3 Summit Developer Lab — on-chain registry contract on Paseo Asset Hub + frontend bundle on Bulletin under `playground.dot`.
+A three-tab quest platform for the Web3 Summit Developer Lab — an on-chain
+registry contract (`@w3s/playground-registry`) + a frontend bundle on Bulletin
+under `playground.dot`.
+
+> **Targets.** Two chains are supported:
+> - **Summit (W3S)** — the production target. Contract leg via `cdm deploy -n w3s`
+>   on Summit Asset Hub; SPA leg via `polkadot-app-deploy --env summit` on Summit
+>   Bulletin. The full operator procedure is the **Summit VM runbook**
+>   (`summit-deployer-skills/guides/PLAYGROUND_SUMMIT_VM_RUNBOOK.md`); the
+>   `## Deploying to Summit` section below is the in-repo summary.
+> - **Paseo Next v2** — staging/preview (CI PR previews, the original `pnpm deploy`).
+>
+> CI auto-deploys the **SPA** to Summit `playground.dot` on every merge to `main`
+> (`deploy-frontend.yml`). The **contract** leg is a deliberate manual step
+> (greenfield, one-time) — never auto-deployed.
+
+## Deploying to Summit (W3S)
+
+The production target. Run on the deployment instance (not a laptop/CI) — it
+needs the funded keys + the PVM toolchain. Full step-by-step with verification:
+`summit-deployer-skills/guides/PLAYGROUND_SUMMIT_VM_RUNBOOK.md`. Summary:
+
+**Prereqs already satisfied (external):** the Summit CDM `ContractRegistry`
+(`0xa5747e60ae27f93e92019e4021abfc4957050141`) and the `contract-developer-tools`
+system contracts (`@mock/reputation`, `@polkadot/contexts`) are deployed and
+registered in it. `cdm.json` `registry` already points at the Summit registry.
+
+**Accounts (reuse the established Summit keys):**
+- **Contract leg** deployer/sudo = the CDM/ctdt **hdkd** deployer
+  `5Hn6AMFkiAyGFgWCShqAdXFax87uknHa5YXCZmiabFidohQy` — funded + Revive-mapped on
+  Summit AH. (Derivation differs by library — fund the *hdkd*-derived account,
+  not a keyring-named one; see the CDM guide Lesson 1.)
+- **SPA leg** uploader + `playground.dot` owner = `5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f`
+  — Bulletin-authorized + funded; the canonical PCF SPA uploader.
+
+```bash
+# 1. Contract leg — build + deploy @w3s/playground-registry to Summit AH,
+#    publish ABI to Bulletin, register in the Summit CDM registry.
+#    Resolves @mock/reputation from the registry at instantiation.
+cdm account map -n w3s          # one-time Revive mapping (caught if already mapped)
+cdm account bal -n w3s          # confirm funds
+pnpm deploy:w3s                 # = cdm deploy -n w3s --suri "$MNEMONIC"
+
+# 2. Authorise the new registry as operator on the playground.dot context.
+ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
+  MNEMONIC="<5Hn6AMFk… suri>" pnpm tsx scripts/register-context.ts add
+
+# 3. Commit the rewritten cdm.json (new @w3s/playground-registry address) so the
+#    SPA build embeds it. Merging to main auto-deploys the SPA (step 4 in CI).
+git add cdm.json && git commit -m "chore: deploy @w3s/playground-registry to Summit" && git push
+
+# 4. SPA leg — build + publish to Summit Bulletin, bind playground.dot.
+#    (CI does this automatically on merge to main; this is the manual equivalent.)
+pnpm build:frontend
+MNEMONIC="<5Fk8… suri>" pnpm deploy:frontend:summit
+
+# 5. Publish the playground app's own registry metadata entry (manual; CI-disabled).
+ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
+  BULLETIN_WS_URL=wss://summit-bulletin-rpc.polkadot.io \
+  MNEMONIC="<5Fk8… suri>" pnpm tsx scripts/publish-metadata.ts playground.dot
+```
+
+**Verify (Summit):** point the diagnostic scripts at Summit via env overrides —
+`ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io pnpm tsx scripts/verify-contracts.ts`,
+`git diff cdm.json` (new address, bumped version), then
+`curl -sSI https://playground.dot.li | head -1`. The on-chain assurance ladder
+(L1–L8) is in the runbook. Notes: never pass `--publish` on Summit (no Publisher);
+use `--mnemonic` not `--suri` for the SPA leg (direct signer); `src/config.ts`
+`CHAIN` stays `"paseo"` (the host injects Summit at runtime — see the comment there).
+
+---
 
 ## Prerequisites
+
+> The section below targets **Paseo Next v2** (staging/preview). For Summit use
+> the section above.
 
 - pnpm 10.17.1 (check: `pnpm --version`)
 - Node 22.x (check: `node --version`)

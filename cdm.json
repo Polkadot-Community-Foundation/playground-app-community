@@ -7,8 +7,8 @@
   },
   "contracts": {
     "@mock/reputation": {
-      "version": 2,
-      "address": "0x56047c64075bF9D71249143FBAc5B28816ce90Bb",
+      "version": 0,
+      "address": "0x94a9099379EeA0C5093F93E9934a7f6605E7922f",
       "abi": [
         {
           "type": "constructor",
@@ -159,11 +159,11 @@
           "stateMutability": "view"
         }
       ],
-      "metadataCid": "bafk2bzacedgphx3l52fa7wdkmq32f6muuo4w6envzuknf76npjd7tbmnekupk"
+      "metadataCid": "bafk2bzacedzebmc33kmrgtynlvlwxdhusuuzoxc5cbasxhfi2xjkg3n4umuxe"
     },
     "@polkadot/contexts": {
-      "version": 2,
-      "address": "0xD7bad6D466339F62BaF0196f4b43168c8Ab07e89",
+      "version": 0,
+      "address": "0x9B935075094D7176Afc7e33C5B183109B86B1b6A",
       "abi": [
         {
           "type": "constructor",
@@ -298,11 +298,11 @@
           "stateMutability": "view"
         }
       ],
-      "metadataCid": "bafk2bzacebfplzp6cwusdwldowoq5jgtgtwmnauehio6cn34wvmdas6x2l5ns"
+      "metadataCid": "bafk2bzacebxxftyxsgmbqbqjxg2epgt2cu5efcgqudaeze7mbs2po7exzsbhu"
     },
     "@w3s/playground-registry": {
-      "version": 5,
-      "address": "0x46C2038461066a0D8a8c15c52FF07Cb410F7C438",
+      "version": 0,
+      "address": "0x14C27954796575C26c85eD9BC6441522e174a0f3",
       "abi": [
         {
           "type": "constructor",
@@ -1429,7 +1429,7 @@
           "stateMutability": "view"
         }
       ],
-      "metadataCid": "bafk2bzacebzgi5ky5wcjgiribxt4sv2d2ldjqzsj6bmyrvctgmqlbvnpvzji2"
+      "metadataCid": "bafk2bzaceai6hn6a7ewu5ld76j3okvsja3oj5mltyhzrpztimmlcx7n5zsi5g"
     },
     "@staging/playground-registry": {
       "version": 24,

@@ -45,7 +45,7 @@ on:
                 options:
                     - parity-default
                     - ubuntu-latest
-                default: parity-default
+                default: ubuntu-latest
 
 # contents: write needed to push cdm.json commit back to main
 permissions:
@@ -67,7 +67,7 @@ jobs:
     # workflow_dispatch always runs.
     # ------------------------------------------------------------------
     detect-changes:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Detect Changes
         outputs:
             contracts_changed: ${{ steps.filter.outputs.contracts }}
@@ -93,7 +93,7 @@ jobs:
     build:
         needs: detect-changes
         if: github.event_name == 'pull_request' && needs.detect-changes.outputs.contracts_changed == 'true'
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Build Contracts
         steps:
             - name: Checkout repository
@@ -150,7 +150,7 @@ jobs:
     deploy:
         needs: detect-changes
         if: github.event_name == 'workflow_dispatch'
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Deploy Contracts
         steps:
             - name: Checkout repository
@@ -328,7 +328,7 @@ jobs:
     comment-build-success:
         needs: [detect-changes, build]
         if: github.event_name == 'pull_request' && needs.build.result == 'success'
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Build Success
         steps:
             - name: Comment on PR
@@ -347,7 +347,7 @@ jobs:
     comment-build-failure:
         needs: [detect-changes, build]
         if: github.event_name == 'pull_request' && needs.build.result == 'failure'
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Build Failure
         steps:
             - name: Comment on PR

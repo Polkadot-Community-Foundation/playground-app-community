@@ -53,7 +53,8 @@ import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub
 import cdmJsonRaw from "../cdm.json" with { type: "json" };
 import { XP_VALUES } from "../src/xpValues";
 
-const ASSET_HUB_WS = "wss://paseo-asset-hub-next-rpc.polkadot.io";
+const ASSET_HUB_WS =
+  process.env.ASSET_HUB_WS_URL ?? "wss://paseo-asset-hub-next-rpc.polkadot.io";
 const DEV_SURI = "ensure coffee ripple degree senior grunt unit seek defense year spoon fix";
 const PACKAGE = "@staging/playground-registry";
 const VISIBILITY_PRIVATE = 0;

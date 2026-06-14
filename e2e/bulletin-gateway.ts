@@ -23,12 +23,12 @@
  * gateway URL directly instead — same shape the legacy
  * `getGateway("paseo") + fetchJson` helpers produced.
  *
- * Pinned to the Paseo Next v2 gateway that matches the `-n paseo` CDM preset.
- * Override via `BULLETIN_GATEWAY_URL` for runs against a custom IPFS endpoint.
+ * Defaults to the Summit IPFS gateway (production target); override via
+ * `BULLETIN_GATEWAY_URL` for Paseo or a custom IPFS endpoint.
  */
 
 const GATEWAY: string = (
-  process.env.BULLETIN_GATEWAY_URL ?? "https://paseo-bulletin-next-ipfs.polkadot.io/ipfs"
+  process.env.BULLETIN_GATEWAY_URL ?? "https://summit-ipfs.polkadot.io/ipfs"
 ).replace(/\/$/, "");
 
 export async function gatewayFetchJson(cid: string): Promise<unknown> {

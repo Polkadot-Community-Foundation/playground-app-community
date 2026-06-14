@@ -16,11 +16,16 @@ on:
                 options:
                     - parity-default
                     - ubuntu-latest
-                default: parity-default
+                default: ubuntu-latest
     pull_request:
-    # Daily at 06:00 UTC — catches Paseo regressions and signer balance drift
-    schedule:
-        - cron: "0 6 * * *"
+    # Nightly schedule DISABLED while the suite targets Summit: e2e is red until
+    # the Summit blockers clear (product-sdk Summit env, host-api-test-sdk
+    # SUMMIT_ASSET_HUB fixture, @w3s/playground-registry deployed, funder
+    # Bulletin auth — see PLAYGROUND_SUMMIT_VM_RUNBOOK §12). Leaving the cron on
+    # would make `auto-file-failure` open a GitHub issue every night. Re-enable
+    # once e2e can go green on Summit.
+    # schedule:
+    #     - cron: "0 6 * * *"
 
 permissions:
     contents: read
@@ -38,7 +43,7 @@ jobs:
     # group — multiple PRs can run reads in parallel. Target wall-clock ~3-5 min.
     e2e-reads:
         name: E2E Reads (parallel)
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         timeout-minutes: 15
         env:
             GITHUB_REPO: ${{ github.repository }}
@@ -88,7 +93,7 @@ jobs:
     # Target wall-clock ~5-8 min.
     e2e-writes:
         name: E2E Writes (sequential, funder-gated)
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         timeout-minutes: 30
         concurrency:
             group: e2e-funder
@@ -141,7 +146,7 @@ jobs:
     # in PR #167 after the suite went green on Paseo Asset Hub Next.
     auto-file-failure:
         name: Auto-file failure issue
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         needs: [e2e-reads, e2e-writes]
         if: |
             failure() &&

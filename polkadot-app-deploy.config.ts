@@ -14,7 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { defineConfig } from "bulletin-deploy";
+// `defineConfig` is vendored as an identity function rather than imported from
+// the deploy CLI: the tool (`@polkadot-community-foundation/polkadot-app-deploy`)
+// is a global/npx CLI, not a package.json dependency, so importing from it makes
+// config resolution fragile. The tool auto-discovers this file by name
+// (`polkadot-app-deploy.config.{ts,js,mjs}`) and reads the default export.
+const defineConfig = <T>(config: T): T => config;
 
 declare const process: { env?: Record<string, string | undefined> };
 

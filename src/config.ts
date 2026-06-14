@@ -14,6 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+// Chain preset passed to `getChainAPI` for the *standalone* (non-host) boot
+// path. When the SPA runs inside a Polkadot host (Desktop/Browser) the host
+// injects the active network — on Summit that is Summit Asset Hub — so this
+// const does not gate the in-host network. It still selects the preset for a
+// plain-browser/gateway view and the `paseo_asset_hub` typed descriptor.
+// NOTE (Summit): left as "paseo" deliberately — `@parity/product-sdk-chain-client`
+// must expose a Summit/w3s preset before this can flip without breaking the
+// typed client. Verify against an installed product-sdk on the deploy VM; the
+// in-host Summit path is unaffected. See the Summit VM runbook.
 export const CHAIN = "paseo" as const;
 
 // `import.meta.env` is Vite-only — undefined when this file is imported from a
@@ -28,7 +37,7 @@ export const BUILD_TIME = env.VITE_BUILD_TIME ?? "";
 
 // Base URL for the revX editor. Override per environment via VITE_REVX_URL.
 // Trailing slash is stripped so the value can be used as `${REVX_URL}/path`.
-export const REVX_URL = (env.VITE_REVX_URL ?? "https://stg.revx.dev").replace(/\/$/, "");
+export const REVX_URL = (env.VITE_REVX_URL ?? "https://revx.dev").replace(/\/$/, "");
 
 // Canonical public host for share links. Used instead of window.location.href
 // so a link copied from Polkadot Desktop, from a localhost dev session, or
@@ -61,11 +70,12 @@ function defaultDotNsId(): string {
 export const PLAYGROUND_DOTNS_ID = env.VITE_PLAYGROUND_DOTNS_ID ?? defaultDotNsId();
 
 // One-line shell command shown in the InstallWidget and the home-page CLI
-// rows. Override via VITE_INSTALL_CMD for staging / PR-preview environments
-// that point at a different `install.sh`.
+// rows. Points at the PCF playground-cli fork (the canonical CLI for the
+// Summit deployment). Override via VITE_INSTALL_CMD for staging / PR-preview
+// environments that point at a different `install.sh`.
 export const INSTALL_CMD =
   env.VITE_INSTALL_CMD ??
-  "curl -fsSL https://raw.githubusercontent.com/paritytech/playground-cli/main/install.sh | bash";
+  "curl -fsSL https://raw.githubusercontent.com/Polkadot-Community-Foundation/playground-cli/main/install.sh | bash";
 
 // Pinned tutorial app's domain on the registry. Used by IslandPortal + AppsTab
 // to deep-link the tutorial CTA at /apps?app=<TUTORIAL_DOMAIN>. Must be a
