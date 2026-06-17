@@ -1,0 +1,43 @@
+name: Grant registry admin (Summit)
+
+# One-off / occasional: grant an SS58 account day-to-day admin (pin/unpin,
+# visibility, adminSet*) on the live @w3s/playground-registry via the contract's
+# add_admin (sudo-gated). Signed by the registry sudo (secrets.MNEMONIC = 5Fk8,
+# verified getSudo()==0xF8d186c3…). Reads the registry address from cdm.json and
+# talks to Summit Asset Hub directly over WS (no eth-rpc adapter needed).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ss58:
+        description: "SS58 address to grant playground-registry admin"
+        required: true
+        default: "5FHxLwXdYvyQAsuH9RKeF7LyLXJaA3NbXjPZAbq13hZMcKRN"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One signer (5Fk8) signs serially on-chain — never run alongside a contract deploy.
+  group: deploy-contracts-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  grant-admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pnpm install --frozen-lockfile
+      - name: Grant admin ${{ inputs.ss58 }} on @w3s/playground-registry (Summit)
+        env:
+          MNEMONIC: ${{ secrets.MNEMONIC }}
+          ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
+        run: |
+          set -euo pipefail
+          [ -n "$MNEMONIC" ] || { echo "::error::secrets.MNEMONIC (registry sudo, 5Fk8) is not set"; exit 1; }
+          pnpm tsx scripts/add-admin.ts "${{ inputs.ss58 }}"
