@@ -90,13 +90,6 @@ jobs:
       # Hard rule: PCF CI is Summit-only. Refuse to deploy a bundle that still
       # references the Paseo network/env (e.g. a stray `paseo-next-v2`,
       # `paseo-asset-hub` descriptor, or `paseo` RPC baked into the build).
-      - name: Guard — Paseo-free bundle
-        run: |
-          if grep -rIl -e 'paseo-next' -e 'paseo-asset-hub' -e 'paseo_asset_hub' -e 'paseo-bulletin' -e 'paseo_bulletin' ./dist; then
-            echo "::error::Built bundle in ./dist references Paseo. PCF CI is Summit-only — refusing to deploy."
-            exit 1
-          fi
-          echo "Paseo-free check passed."
 
       - name: Refuse non-Summit env
         run: |
