@@ -37,7 +37,7 @@ on:
         type: string
         default: ubuntu-latest
       publish:
-        description: "Publish to the Publisher registry (paseo only; Summit has no Publisher and ignores this)"
+        description: "Publish to the Publisher registry (lists the app in the browse directory). Summit now wires a Publisher (CLI >=0.11.1)."
         type: boolean
         default: false
     secrets:
@@ -104,7 +104,7 @@ jobs:
           node-version: "22"
 
       - name: Install polkadot-app-deploy
-        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.11.0
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.11.1
 
       - name: Deploy to Bulletin
         id: deploy
@@ -115,14 +115,15 @@ jobs:
           retry_wait_seconds: 30
           # --mnemonic = direct signer (required on Summit; --suri/pool is the
           #   unauthorized public dev phrase). --js-merkle skips the Kubo
-          #   download. --publish only on non-summit (Summit has no Publisher).
+          #   download. --publish lists the app in the browse directory; Summit
+          #   wires a Publisher as of CLI >=0.11.1, so it is honored there now.
           command: >-
             APP_DOTNS_DOMAIN='${{ inputs.dotns-domain }}'
             polkadot-app-deploy './dist'
             --env '${{ inputs.env }}'
             --mnemonic "$MNEMONIC"
             --js-merkle
-            ${{ (inputs.publish && inputs.env != 'summit') && '--publish' || '' }}
+            ${{ inputs.publish && '--publish' || '' }}
             '${{ inputs.dotns-domain }}'
         env:
           MNEMONIC: ${{ secrets.mnemonic }}

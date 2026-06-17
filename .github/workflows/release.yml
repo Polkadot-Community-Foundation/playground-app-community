@@ -116,7 +116,8 @@ jobs:
             dotns-domain: ${{ needs.domain.outputs.domain }}
             artifact-name: frontend-build
             env: summit
-            # publish is ignored on Summit (no Publisher); kept for non-summit reuse.
+            # publish lists playground.dot in the browse directory. Summit wires
+            # a Publisher as of polkadot-app-deploy >=0.11.1, so this is honored.
             publish: true
         secrets:
             mnemonic: ${{ secrets.MNEMONIC }}
