@@ -20,10 +20,10 @@ on:
         required: true
         type: string
       env:
-        description: "polkadot-app-deploy environment: paseo-next-v2 | summit"
+        description: "polkadot-app-deploy environment (Summit-only in PCF CI)"
         required: false
         type: string
-        default: paseo-next-v2
+        default: summit
       environment:
         description: "GitHub Environment to gate the deploy on (e.g. 'production' for required reviewers)"
         required: false
@@ -86,6 +86,17 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
           path: dist
+
+      # Hard rule: PCF CI is Summit-only. Refuse to deploy a bundle that still
+      # references the Paseo network/env (e.g. a stray `paseo-next-v2`,
+      # `paseo-asset-hub` descriptor, or `paseo` RPC baked into the build).
+
+      - name: Refuse non-Summit env
+        run: |
+          if [ "${{ inputs.env }}" != "summit" ]; then
+            echo "::error::env='${{ inputs.env }}' is not 'summit'. PCF CI is Summit-only."
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

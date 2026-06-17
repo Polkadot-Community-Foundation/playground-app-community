@@ -30,9 +30,9 @@ on:
     workflow_dispatch:
         inputs:
             network:
-                description: "CDM network to deploy to (e.g. paseo, polkadot, local)"
+                description: "CDM network to deploy to (Summit == 'w3s'; PCF CI is Summit-only)"
                 required: false
-                default: "paseo"
+                default: "w3s"
                 type: string
             force_cli_manifest_release:
                 description: "Also dispatch the CLI manifest release workflow even if cdm.json did not change"
@@ -52,9 +52,10 @@ permissions:
     contents: write
     pull-requests: write
 
-# Network defaults to paseo; overridable via workflow_dispatch input
+# PCF CI is Summit-only. In the CDM toolchain the Summit network is keyed
+# `w3s` (see package.json `deploy:w3s`). Overridable via workflow_dispatch input.
 env:
-    CDM_NETWORK: ${{ inputs.network || 'paseo' }}
+    CDM_NETWORK: ${{ inputs.network || 'w3s' }}
 
 concurrency:
     group: deploy-contracts-${{ github.event.pull_request.number || github.ref }}
@@ -278,11 +279,11 @@ jobs:
                   fi
 
             # Keep the CLI's bundled contract ABI/metadata fresh after the
-            # live Paseo registry changes. The CLI workflow handles no-op
+            # live Summit registry changes. The CLI workflow handles no-op
             # checks and performs the patch release.
             - name: Trigger CLI contract manifest release
               if: |
-                  env.CDM_NETWORK == 'paseo'
+                  env.CDM_NETWORK == 'w3s'
                   && (
                     steps.commit-cdm-json.outputs.pushed == 'true'
                     || (github.event_name == 'workflow_dispatch' && inputs.force_cli_manifest_release)

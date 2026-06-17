@@ -89,8 +89,9 @@ jobs:
         outputs:
             domain: ${{ steps.compute.outputs.domain }}
         steps:
-            # PRs get an ephemeral preview on Paseo. main (workflow_run) and
-            # manual dispatch deploy production to Summit `playground.dot`.
+            # PRs get an ephemeral preview on Summit (pr-N-playgroundtest.dot).
+            # main (workflow_run) and manual dispatch deploy production to
+            # Summit `playground.dot`. PCF CI is Summit-only.
             - name: Compute domain
               id: compute
               run: |
