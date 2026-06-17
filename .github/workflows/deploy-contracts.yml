@@ -211,11 +211,12 @@ jobs:
               id: migrate-registry
               run: |
                   set -e
-                  OLD_ADDR=$(git show HEAD:cdm.json 2>/dev/null | node -e "
-                    let cdm; try { cdm = JSON.parse(require('fs').readFileSync(0,'utf8')); } catch { process.exit(0); }
-                    const t = Object.values(cdm.contracts ?? {})[0];
-                    process.stdout.write(t?.['@w3s/playground-registry']?.address ?? '');
-                  " || true)
+                  # PCF/Summit: this fork is an orphan-history re-baseline of the
+                  # upstream snapshot, so HEAD's cdm.json does NOT carry the live
+                  # Summit registry address. Pin the prior registry explicitly to
+                  # the live @w3s/playground-registry on Summit Asset Hub so the
+                  # migration exports from the real on-chain state.
+                  OLD_ADDR=0x14C27954796575C26c85eD9BC6441522e174a0f3
                   NEW_ADDR=$(node -e "
                     const cdm = require('./cdm.json');
                     const t = Object.values(cdm.contracts)[0];
@@ -238,7 +239,7 @@ jobs:
                   SNAPSHOT="migration/snapshot-${{ github.run_id }}.json"
 
                   echo "::group::Export from $OLD_ADDR"
-                  pnpm tsx scripts/export-registry-state.ts --address "$OLD_ADDR" --out "$SNAPSHOT"
+                  pnpm tsx scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
                   echo "::endgroup::"
 
                   APP_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').apps.length))")
@@ -250,6 +251,9 @@ jobs:
                   echo "::notice::Migrated ${APP_COUNT} apps + ${PIN_COUNT} pinned from $OLD_ADDR to $NEW_ADDR"
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
+                  # Summit: import-registry-state.ts reads assetHubWsUrl() which
+                  # defaults to Paseo; point it at Summit Asset Hub.
+                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
 
             # Keep the snapshot as a workflow artifact so a failed import can
             # be replayed manually without re-exporting from the prior chain.
