@@ -1,0 +1,27 @@
+[package]
+name = "playground-registry"
+version.workspace = true
+edition.workspace = true
+description = "App registry contract - registers and manages .dot app listings for the Polkadot app store"
+authors.workspace = true
+license.workspace = true
+
+[package.metadata.cdm]
+package = "@w3s/playground-registry"
+dependencies = []
+
+[dependencies]
+cdm.workspace = true
+common.workspace = true
+pvm-cdm.workspace = true
+pvm_contract.workspace = true
+polkavm-derive.workspace = true
+parity-scale-codec.workspace = true
+picoalloc.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name = "playground-registry"
+path = "lib.rs"

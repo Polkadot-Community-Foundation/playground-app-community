@@ -1,0 +1,40 @@
+# cargo-deny configuration — used by `cargo deny check licenses`.
+# Allowlists the SPDX identifiers found in this workspace's Rust dep tree
+# (all permissive). If a new dep introduces a copyleft or otherwise
+# unexpected licence, the check fails and forces a conscious decision.
+
+[licenses]
+# Default cargo-deny denies everything; explicit allowlist of permissive
+# licences observed in the current dep tree.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "ISC",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "MPL-2.0",
+]
+
+# Three workspace-internal git deps don't declare a `license` field in their
+# individual crate Cargo.toml but the upstream repos are Apache-2.0
+# (paritytech/contract-dependency-manager, paritytech/contract-developer-tools).
+# Clarified here so the check passes; the long-term fix is upstream.
+[[licenses.clarify]]
+crate = "cdm"
+expression = "Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "cdm-macros"
+expression = "Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "common"
+expression = "Apache-2.0"
+license-files = []

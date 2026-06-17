@@ -1,0 +1,141 @@
+name: Deploy to Bulletin
+
+# Reusable workflow that uploads a built frontend artifact to Bulletin/IPFS
+# under a given DotNS domain. Callers (deploy-frontend.yml, release.yml)
+# build the artifact and pass the target domain.
+
+on:
+  workflow_call:
+    inputs:
+      dotns-domain:
+        description: "DotNS domain name (with .dot extension)"
+        required: true
+        type: string
+      artifact-name:
+        description: "Name of the build artifact to download"
+        required: true
+        type: string
+      environment:
+        description: "GitHub Environment to gate the deploy on (e.g. 'production' for required reviewers)"
+        required: false
+        type: string
+      max-retries:
+        description: "Maximum number of deployment retry attempts"
+        type: number
+        default: 3
+      runner:
+        description: "Runner label"
+        type: string
+        default: parity-default
+      publish:
+        description: "Publish to browse.dot"
+        type: boolean
+        default: false
+    secrets:
+      mnemonic:
+        description: "Mnemonic for the DotNS domain owner"
+        required: true
+    outputs:
+      cid:
+        description: "Content CID of the uploaded bundle"
+        value: ${{ jobs.deploy.outputs.cid }}
+      domain:
+        description: "Full domain name (with .dot)"
+        value: ${{ jobs.deploy.outputs.domain }}
+      url:
+        description: "Browser URL (https://<domain>.li)"
+        value: ${{ jobs.deploy.outputs.url }}
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runner }}
+    environment: ${{ inputs.environment }}
+    outputs:
+      cid: ${{ steps.deploy.outputs.cid }}
+      # bulletin-deploy strips `.dot` from its `domain` output (returns the bare
+      # label). Surface the caller's input instead so downstream consumers get
+      # the full `<name>.dot` form they passed in.
+      domain: ${{ inputs.dotns-domain }}
+      url: ${{ steps.url.outputs.url }}
+    steps:
+      # bulletin-deploy auto-discovers bulletin-deploy.config.ts from the
+      # repo root and the config references ./assets/icon.png — so the
+      # working tree needs to be on disk before deploy, not just ./dist.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Restore Kubo from cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kubo
+          key: kubo-v0.33.0-linux-amd64
+
+      - name: Setup IPFS Kubo
+        run: |
+          if [ ! -f ~/.cache/kubo/ipfs ]; then
+            mkdir -p ~/.cache/kubo
+            curl -fsSL -o /tmp/kubo.tar.gz https://dist.ipfs.tech/kubo/v0.33.0/kubo_v0.33.0_linux-amd64.tar.gz
+            tar -xf /tmp/kubo.tar.gz -C /tmp
+            cp /tmp/kubo/ipfs ~/.cache/kubo/ipfs
+            rm -rf /tmp/kubo /tmp/kubo.tar.gz
+          fi
+          sudo cp ~/.cache/kubo/ipfs /usr/local/bin/ipfs
+          ipfs version
+
+      - name: Initialize IPFS
+        run: ipfs init
+
+      - name: Install bulletin-deploy
+        # Symlink the global install into local node_modules so jiti can
+        # resolve `import { defineConfig } from "bulletin-deploy"` from
+        # bulletin-deploy.config.ts when the CLI loads the config.
+        run: |
+          npm install -g bulletin-deploy
+          mkdir -p node_modules
+          ln -sfn "$(npm root -g)/bulletin-deploy" node_modules/bulletin-deploy
+
+      - name: Deploy to Bulletin
+        id: deploy
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 15
+          max_attempts: ${{ inputs.max-retries }}
+          retry_wait_seconds: 30
+          command: bulletin-deploy './dist' --env paseo-next-v2 ${{ inputs.publish && '--publish' || '' }} '${{ inputs.dotns-domain }}'
+        env:
+          MNEMONIC: ${{ secrets.mnemonic }}
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          # Read by bulletin-deploy.config.ts (defineConfig throws if unset).
+          APP_DOTNS_DOMAIN: ${{ inputs.dotns-domain }}
+
+      - name: Validate deployment outputs
+        run: |
+          if [ -z "${{ steps.deploy.outputs.cid }}" ] || [ -z "${{ steps.deploy.outputs.domain }}" ]; then
+            echo "::error::Deploy step completed but produced no CID or domain. Likely an OOM or silent crash."
+            exit 1
+          fi
+
+      - name: Compute browser URL
+        id: url
+        run: echo "url=https://${{ inputs.dotns-domain }}.li" >> "$GITHUB_OUTPUT"
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "### ${{ inputs.dotns-domain }}"
+            echo
+            echo "Browser &nbsp; ${{ steps.url.outputs.url }}"
+            echo "Desktop &nbsp; \`${{ inputs.dotns-domain }}\`"
+            echo "CID &nbsp; \`${{ steps.deploy.outputs.cid }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

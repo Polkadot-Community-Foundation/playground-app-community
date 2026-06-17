@@ -1,0 +1,40 @@
+target/
+dist/
+node_modules/
+reference-repos/
+dist.car
+.DS_Store
+
+# Env files. The bare `.env` pattern is deliberate — `.env.local` alone does
+# not ignore a plain `.env` with credentials. Allow-list `.env.example`.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+test-results/
+playwright-report/
+.cdm/
+tsconfig.tsbuildinfo
+e2e/dev-accounts.json
+dist.bulletin.car
+# Registry migration snapshots / rollback backups (env-specific data, not source)
+migration/
+
+# Build outputs and per-developer tool caches.
+coverage/
+.turbo/
+.output/
+.nuxt/
+
+# Per-developer AI-tooling state. Agent configuration that documents the
+# project itself (`.claude/commands/`, `.claude/skills/`, `.claude/agents/`,
+# `CLAUDE.md`) is intentionally tracked; session/cache/worktree state is not.
+.claude/sessions/
+.claude/cache/
+.claude/settings.local.json
+.claude/worktrees/
+.cursor/
+.codeium/
+.gemini/
+.aider/

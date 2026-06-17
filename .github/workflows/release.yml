@@ -1,0 +1,172 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - "v*.*.*"
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: "Tag to deploy (must match v<MAJOR>.<MINOR>.<PATCH>, e.g. v1.2.3)"
+                required: true
+                type: string
+            domain:
+                description: "DotNS domain to deploy to"
+                required: false
+                default: "playground.dot"
+                type: string
+            runner:
+                description: "Runner label"
+                type: choice
+                options:
+                    - parity-default
+                    - ubuntu-latest
+                default: parity-default
+
+permissions:
+    contents: write   # for creating GitHub Release
+
+# Resolve release knobs once. RELEASE_REF: dispatch input or the pushed tag.
+# RELEASE_DOMAIN: dispatch input (defaults to playground.dot) or — for
+# tag-triggered runs where `inputs` is empty — the same literal as a fallback.
+# The default value appears twice on purpose: once for the UI prefill on
+# manual dispatch, once for the tag-trigger path. Keep them in sync.
+env:
+    RELEASE_REF: ${{ github.event.inputs.tag || github.ref_name }}
+    RELEASE_DOMAIN: ${{ inputs.domain || 'playground.dot' }}
+
+concurrency:
+    group: release
+    cancel-in-progress: false
+
+jobs:
+    # Surface RELEASE_DOMAIN as a job output so the reusable deploy workflow
+    # can consume it under `with:`, which doesn't have access to the `env`
+    # context. Other jobs read it directly from $RELEASE_DOMAIN inside their
+    # shell commands.
+    domain:
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Resolve domain
+        outputs:
+            domain: ${{ env.RELEASE_DOMAIN }}
+        steps:
+            - run: echo "release domain = $RELEASE_DOMAIN"
+
+    build:
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Build
+        steps:
+            # workflow_dispatch inputs don't support pattern constraints
+            # (only `choice` for enums) — runtime validation is the only option.
+            # Pass via env to prevent shell injection from a hostile input.
+            - name: Validate dispatch tag format
+              if: github.event_name == 'workflow_dispatch'
+              env:
+                  INPUT_TAG: ${{ github.event.inputs.tag }}
+              run: |
+                  if [[ ! "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "::error::Tag '$INPUT_TAG' does not match v<MAJOR>.<MINOR>.<PATCH>"
+                    exit 1
+                  fi
+
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ env.RELEASE_REF }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: "pnpm"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Determine build version
+              id: version
+              env:
+                  RELEASE_REF: ${{ env.RELEASE_REF }}
+              run: |
+                  echo "version=$RELEASE_REF" >> "$GITHUB_OUTPUT"
+                  echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+            - name: Build
+              env:
+                  VITE_VERSION: ${{ steps.version.outputs.version }}
+                  VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}
+                  VITE_SENTRY_ENV: production
+                  VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+              run: pnpm build:frontend
+
+            - name: Upload build artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: frontend-build
+                  path: dist
+                  retention-days: 30
+
+    deploy:
+        needs: [build, domain]
+        name: Deploy
+        uses: ./.github/workflows/deploy-to-bulletin.yml
+        with:
+            dotns-domain: ${{ needs.domain.outputs.domain }}
+            artifact-name: frontend-build
+            publish: true
+        secrets:
+            mnemonic: ${{ secrets.MNEMONIC }}
+
+    publish-metadata:
+        needs: deploy
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Publish Metadata
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ env.RELEASE_REF }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: "pnpm"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Publish metadata to registry
+              uses: nick-fields/retry@v3
+              with:
+                  timeout_minutes: 10
+                  max_attempts: 3
+                  retry_wait_seconds: 30
+                  command: pnpm tsx scripts/publish-metadata.ts "$RELEASE_DOMAIN"
+              env:
+                  MNEMONIC: ${{ secrets.MNEMONIC }}
+                  NODE_OPTIONS: "--max-old-space-size=8192"
+
+    github-release:
+        needs: deploy
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: GitHub Release
+        steps:
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ env.RELEASE_REF }}
+                  generate_release_notes: true
+                  append_body: true
+                  body: |
+                      Deployed to **${{ needs.deploy.outputs.domain }}**
+
+                      - Browser &nbsp; ${{ needs.deploy.outputs.url }}
+                      - Desktop &nbsp; `${{ needs.deploy.outputs.domain }}`
+                      - CID &nbsp; `${{ needs.deploy.outputs.cid }}`
