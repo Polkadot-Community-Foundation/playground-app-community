@@ -1,0 +1,224 @@
+# Build and deploy the frontend to Bulletin IPFS.
+#
+# On main:  waits for Deploy Contracts to finish (via workflow_run) so that
+#           cdm.json is up-to-date before building the frontend bundle.
+# On PRs:   runs independently (contracts workflow only triggers on contract changes).
+name: Deploy Frontend
+
+on:
+    # On main: runs AFTER Deploy Contracts completes, so the frontend always
+    # builds with the latest cdm.json (including any new contract address).
+    workflow_run:
+        workflows: ["Deploy Contracts"]
+        types: [completed]
+        branches:
+            - main
+    # PRs run independently — no need to wait for contracts
+    pull_request:
+        branches:
+            - main
+    workflow_dispatch:
+        inputs:
+            runner:
+                description: "Runner label"
+                type: choice
+                options:
+                    - parity-default
+                    - ubuntu-latest
+                default: parity-default
+
+permissions:
+    contents: read
+    pull-requests: write
+
+concurrency:
+    group: deploy-frontend-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    build:
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Build
+        steps:
+            # For workflow_run events, check out latest main to include any
+            # cdm.json updates from the contracts deploy.
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Determine build version
+              id: version
+              run: |
+                  if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                    VERSION="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
+                    SENTRY_ENV="preview-${{ github.event.pull_request.number }}"
+                  else
+                    VERSION="${GITHUB_SHA::7}"
+                    SENTRY_ENV="production"
+                  fi
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "sentry_env=$SENTRY_ENV" >> "$GITHUB_OUTPUT"
+                  echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+            - name: Install and build
+              env:
+                  VITE_VERSION: ${{ steps.version.outputs.version }}
+                  VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}
+                  VITE_SENTRY_ENV: ${{ steps.version.outputs.sentry_env }}
+                  VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+              run: pnpm install && pnpm build:frontend
+
+            - name: Upload build artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: frontend-build
+                  path: dist
+                  retention-days: 1
+
+    domain:
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Determine domain
+        outputs:
+            domain: ${{ steps.compute.outputs.domain }}
+        steps:
+            - name: Compute domain
+              id: compute
+              run: |
+                  if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+                    echo "domain=pr-${{ github.event.pull_request.number }}-playgroundtest.dot" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "domain=playgroundtest.dot" >> "$GITHUB_OUTPUT"
+                  fi
+
+    comment-deploying:
+        needs: [build, domain]
+        if: github.event_name == 'pull_request'
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Comment Deploying
+        steps:
+            - name: Comment deployment in progress
+              uses: marocchino/sticky-pull-request-comment@v2
+              with:
+                  header: deploy-preview
+                  message: |
+                      ## Preview Deployment
+
+                      | App | Status |
+                      |:---:|:------:|
+                      | Frontend | Deploying... |
+
+                      <sub>Deployment in progress. This comment will update when ready. [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>
+
+    deploy:
+        needs: [build, domain]
+        name: Deploy
+        uses: ./.github/workflows/deploy-to-bulletin.yml
+        with:
+            dotns-domain: ${{ needs.domain.outputs.domain }}
+            artifact-name: frontend-build
+        secrets:
+            mnemonic: ${{ secrets.E2E_FUNDER_SEED }}
+
+    publish-metadata:
+        needs: [build, deploy]
+        # TEMPORARILY DISABLED — blocked on paritytech/product-sdk#102
+        # `@parity/product-sdk-bulletin`'s client is host-container-only and
+        # cannot run from a Node CI runner. No end-user impact (the user paths
+        # — browse via host, `dot deploy --playground`, RevX — all work).
+        # Restore the original `if:` below once the SDK exposes a Node-callable
+        # Bulletin upload path.
+        # if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch')
+        if: false
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Publish Metadata
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Install dependencies
+              run: pnpm install
+
+            - name: Publish metadata to registry
+              uses: nick-fields/retry@v3
+              with:
+                  timeout_minutes: 10
+                  max_attempts: 3
+                  retry_wait_seconds: 30
+                  command: pnpm tsx scripts/publish-metadata.ts playgroundtest.dot
+              env:
+                  MNEMONIC: ${{ secrets.E2E_FUNDER_SEED }}
+                  NODE_OPTIONS: "--max-old-space-size=8192"
+
+    comment-success:
+        needs: deploy
+        if: github.event_name == 'pull_request' && success()
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Comment Success
+        steps:
+            - name: Comment on PR
+              uses: marocchino/sticky-pull-request-comment@v2
+              with:
+                  header: deploy-preview
+                  message: |
+                      ## Preview Deployment Ready!
+
+                      | App | Status | Preview |
+                      |:---:|:------:|:-------:|
+                      | **Frontend** | Ready | [**Visit Preview**](${{ needs.deploy.outputs.url }}) |
+
+                      <details>
+                      <summary>Deployment Details</summary>
+
+                      | Detail | Value |
+                      |--------|-------|
+                      | **Domain** | `${{ needs.deploy.outputs.domain }}` |
+                      | **CID** | `${{ needs.deploy.outputs.cid }}` |
+                      | **Commit** | [`${{ github.event.pull_request.head.sha }}`](${{ github.event.pull_request.head.repo.html_url }}/commit/${{ github.event.pull_request.head.sha }}) |
+                      | **Branch** | `${{ github.head_ref }}` |
+
+                      </details>
+
+                      ---
+                      <sub>This preview updates automatically on each push to this PR. [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>
+
+    comment-failure:
+        needs: [build, deploy]
+        if: github.event_name == 'pull_request' && failure()
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Comment Failure
+        steps:
+            - name: Comment on PR
+              uses: marocchino/sticky-pull-request-comment@v2
+              with:
+                  header: deploy-preview
+                  message: |
+                      ## Preview Deployment Failed
+
+                      | Stage | Status |
+                      |:------|:------:|
+                      | **Build** | ${{ needs.build.result == 'success' && 'Built' || needs.build.result == 'skipped' && 'Skipped' || 'Failed' }} |
+                      | **Deploy** | ${{ needs.deploy.result == 'success' && 'Deployed' || needs.deploy.result == 'skipped' && 'Skipped' || 'Failed' }} |
+
+                      [**View workflow run**](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+                      ---
+                      <sub>Fix any issues and push again to retry.</sub>

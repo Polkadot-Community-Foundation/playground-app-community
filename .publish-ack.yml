@@ -1,0 +1,65 @@
+# .publish-ack.yml
+#
+# The audit trail for accept-with-reason findings: items the open-sourcing
+# audit (paritytech/product-skills `opensourcing-check`) flagged that
+# cannot simply be removed before publishing, with the reasoning that
+# justified keeping them. A reviewer reading this should be able to
+# confirm each entry is a deliberate decision, not an oversight.
+#
+# One entry per accepted finding. If you can't write a real reason, the
+# right answer is probably "fix", not "accept".
+
+version: 1
+repo: playground-app
+audited_at: 2026-06-08
+audited_commit: cfb7ba0  # last commit before the main-merge that brought in Charles' CDM-import fix
+
+accepts:
+  - id: pvm-contract-branch-pin
+    item: 2
+    location: Cargo.toml:23
+    finding: >-
+      `pvm_contract` is referenced via `branch = "charles/cdm-integration"`
+      rather than a `rev =` / `tag =` pin. The audit flags this 🔴 as a
+      moving-target reproducibility risk.
+    reason: >-
+      The `common` crate (from paritytech/contract-developer-tools, our
+      `common` workspace dep) hard-codes the `branch = "charles/cdm-integration"`
+      reference upstream in its own Cargo.toml. When our workspace pins
+      `pvm_contract` via `rev =`, Cargo treats our reference and `common`'s as
+      two different sources for the same crate and builds two copies →
+      duplicate `panic_impl` lang-item link error. Tested twice during the
+      pre-publish work; only the `branch =` form lets the contract link
+      cleanly. Cargo.lock pins the exact commit, so the build is still
+      reproducible in practice — only the manifest's `intent` looks
+      branch-tracking. Bumping with `cargo update -p pvm_contract --precise
+      <sha>` is the explicit pin path.
+    mitigation: >-
+      The trade-off is documented inline in `Cargo.toml` next to the
+      `pvm_contract` line. The actual SHA pin lives in `Cargo.lock`. Once
+      `common` upstream switches its own `pvm_contract` reference to
+      `rev =` or moves to a tagged release, we can flip back to `rev =`
+      here without the link-error regression.
+    accepted_by: <name / role>
+
+  - id: staging-registry-package-references
+    item: 5
+    location: |
+      DEPLOY.MD:50, DEPLOY.MD:181,
+      src/utils/contractManifest.ts:22,
+      src/utils/contracts.ts:230
+    finding: >-
+      References to the `@staging/playground-registry` CDM package — the
+      team's staging deployment of the registry contract used for pre-prod
+      verification before flipping `@w3s/playground-registry`.
+    reason: >-
+      The `VITE_PLAYGROUND_REGISTRY_PACKAGE` env-var override is a real,
+      documented operator feature; the in-app error messages tell
+      developers what to set when debugging contract-method gaps.
+      Removing them removes a working developer-onboarding affordance.
+      The `@staging` namespace is a CDM package name, not a hostname —
+      nothing about it functions as access.
+    mitigation: >-
+      README documents that the default is `@w3s/playground-registry` and
+      the override exists for staging verification only.
+    accepted_by: <name / role>

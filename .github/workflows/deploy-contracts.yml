@@ -1,0 +1,371 @@
+# Build and deploy PVM smart contracts via CDM.
+#
+# On PRs:   builds contracts to verify compilation (only when contract files change).
+# On main:  runs on EVERY push (so deploy-frontend.yml can depend on it via workflow_run),
+#           but skips deploy if no contract files changed.
+#           When contracts did change: deploys and commits updated cdm.json.
+#
+# NOTE: cdm deploy creates a NEW contract instance each time (new address,
+#       fresh on-chain state). This is fine for testnet but be aware that
+#       existing registered apps will not carry over.
+
+name: Deploy Contracts
+
+on:
+    # Runs on every push to main (no paths filter) so that deploy-frontend.yml
+    # can use workflow_run to depend on this workflow. The detect-changes job
+    # ensures we skip deploy when no contract files changed.
+    push:
+        branches:
+            - main
+    # PRs only trigger when contract files change (no need to run otherwise)
+    pull_request:
+        branches:
+            - main
+        paths:
+            - "contracts/**"
+            - "Cargo.toml"
+            - "Cargo.lock"
+            - "rust-toolchain.toml"
+    workflow_dispatch:
+        inputs:
+            network:
+                description: "CDM network to deploy to (e.g. paseo, polkadot, local)"
+                required: false
+                default: "paseo"
+                type: string
+            force_cli_manifest_release:
+                description: "Also dispatch the CLI manifest release workflow even if cdm.json did not change"
+                required: false
+                default: false
+                type: boolean
+            runner:
+                description: "Runner label"
+                type: choice
+                options:
+                    - parity-default
+                    - ubuntu-latest
+                default: parity-default
+
+# contents: write needed to push cdm.json commit back to main
+permissions:
+    contents: write
+    pull-requests: write
+
+# Network defaults to paseo; overridable via workflow_dispatch input
+env:
+    CDM_NETWORK: ${{ inputs.network || 'paseo' }}
+
+concurrency:
+    group: deploy-contracts-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    # ------------------------------------------------------------------
+    # Detect changes — fast check so we skip deploy on main when
+    # only frontend files changed. PRs are already path-filtered, and
+    # workflow_dispatch always runs.
+    # ------------------------------------------------------------------
+    detect-changes:
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Detect Changes
+        outputs:
+            contracts_changed: ${{ steps.filter.outputs.contracts }}
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Check for contract changes
+              uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      contracts:
+                          - 'contracts/**'
+                          - 'Cargo.toml'
+                          - 'Cargo.lock'
+                          - 'rust-toolchain.toml'
+
+    # ------------------------------------------------------------------
+    # Build — PR compile check only. Deploy runs CDM's build phase itself, so
+    # deploy jobs do not wait on this job.
+    # ------------------------------------------------------------------
+    build:
+        needs: detect-changes
+        if: github.event_name == 'pull_request' && needs.detect-changes.outputs.contracts_changed == 'true'
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Build Contracts
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            # rust-src is required for build-std (compiling core/alloc for the PolkaVM target)
+            - name: Install Rust nightly
+              # Pinned by full commit SHA (master HEAD at audit time) per
+              # GitHub Actions supply-chain hygiene. To bump, look up the
+              # latest SHA on dtolnay/rust-toolchain's master branch.
+              uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+              with:
+                  toolchain: nightly
+                  components: rust-src
+
+            - name: Cache Rust
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                      target/
+                  key: rust-contracts-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: rust-contracts-
+
+            - name: Install CDM CLI
+              run: |
+                  curl -fsSL https://raw.githubusercontent.com/paritytech/contract-dependency-manager/main/install.sh | bash
+                  echo "$HOME/.cdm/bin" >> "$GITHUB_PATH"
+                  export PATH="$HOME/.cdm/bin:$PATH"
+                  cdm --version
+
+            # CDM's install.sh installs cargo-pvm-contract from `main` (the new
+            # pvm-contract-sdk lineage), which can't build this repo's older
+            # `pvm_contract`-based contract. Reinstall the matching CLI; the rev
+            # is derived from Cargo.lock by the script (single source of truth).
+            - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
+              run: bash scripts/install-pvm-contract-cli.sh
+
+            # Populates ~/.cdm/ cache with ABIs for cdm::import!() macros
+            - name: Install contract dependencies
+              run: cdm i -n ${{ env.CDM_NETWORK }}
+
+            - name: Build contracts
+              run: cdm build
+
+    # ------------------------------------------------------------------
+    # Deploy — MANUAL ONLY (workflow_dispatch). Auto-deploy on push to main is
+    # deliberately disabled: `cdm deploy` creates a NEW contract instance on
+    # every run, so an unattended redeploy + migrate would clobber a registry
+    # that was deployed and verified by hand (e.g. the lineage v12 cutover, where
+    # the migration scrubs dev points and must be checked with a before/after
+    # diff). Trigger this job from the Actions UI ("Run workflow") when you
+    # intentionally want a fresh instance, and pair it with the export/import
+    # migration scripts + a diff. The workflow still RUNS on push to main (the
+    # detect-changes/build jobs), so deploy-frontend's workflow_run dependency
+    # keeps firing and the frontend redeploys with the committed cdm.json.
+    # CDM builds, deploys to the target network, registers in on-chain registry,
+    # then commits the updated cdm.json (new address/ABI) back to main.
+    # ------------------------------------------------------------------
+    deploy:
+        needs: detect-changes
+        if: github.event_name == 'workflow_dispatch'
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Deploy Contracts
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Install JS dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Install CDM CLI
+              run: |
+                  curl -fsSL https://raw.githubusercontent.com/paritytech/contract-dependency-manager/main/install.sh | bash
+                  echo "$HOME/.cdm/bin" >> "$GITHUB_PATH"
+                  export PATH="$HOME/.cdm/bin:$PATH"
+                  cdm --version
+
+            # CDM's install.sh installs cargo-pvm-contract from `main` (the new
+            # pvm-contract-sdk lineage), which can't build this repo's older
+            # `pvm_contract`-based contract. Reinstall the matching CLI; the rev
+            # is derived from Cargo.lock by the script (single source of truth).
+            - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
+              run: bash scripts/install-pvm-contract-cli.sh
+
+            - name: Install contract dependencies
+              run: cdm i -n ${{ env.CDM_NETWORK }}
+
+            # cdm deploy: build -> deploy to Asset Hub -> publish metadata to Bulletin -> register
+            # Retries handle transient RPC/network failures
+            - name: Deploy contracts
+              uses: nick-fields/retry@v3
+              with:
+                  timeout_minutes: 15
+                  max_attempts: 3
+                  retry_wait_seconds: 30
+                  command: cdm deploy -n ${{ env.CDM_NETWORK }} --suri "$MNEMONIC"
+              env:
+                  MNEMONIC: ${{ secrets.MNEMONIC }}
+
+            # Carry app + pin state from the prior cdm.json's registry to
+            # the freshly-deployed one. Skipped on first-ever deploy or no-op
+            # redeploys. Scripts emit ::error:: directives so failures
+            # surface in the workflow summary.
+            - name: Migrate registry state from prior deploy
+              id: migrate-registry
+              run: |
+                  set -e
+                  OLD_ADDR=$(git show HEAD:cdm.json 2>/dev/null | node -e "
+                    let cdm; try { cdm = JSON.parse(require('fs').readFileSync(0,'utf8')); } catch { process.exit(0); }
+                    const t = Object.values(cdm.contracts ?? {})[0];
+                    process.stdout.write(t?.['@w3s/playground-registry']?.address ?? '');
+                  " || true)
+                  NEW_ADDR=$(node -e "
+                    const cdm = require('./cdm.json');
+                    const t = Object.values(cdm.contracts)[0];
+                    process.stdout.write(t['@w3s/playground-registry'].address);
+                  ")
+
+                  echo "Prior registry : ${OLD_ADDR:-<none>}"
+                  echo "New registry   : ${NEW_ADDR}"
+
+                  if [ -z "$OLD_ADDR" ]; then
+                    echo "::notice::No prior registry in HEAD's cdm.json — first-ever deploy, skipping migration."
+                    exit 0
+                  fi
+                  if [ "$OLD_ADDR" = "$NEW_ADDR" ]; then
+                    echo "::notice::cdm deploy did not change the registry address — nothing to migrate."
+                    exit 0
+                  fi
+
+                  mkdir -p migration
+                  SNAPSHOT="migration/snapshot-${{ github.run_id }}.json"
+
+                  echo "::group::Export from $OLD_ADDR"
+                  pnpm tsx scripts/export-registry-state.ts --address "$OLD_ADDR" --out "$SNAPSHOT"
+                  echo "::endgroup::"
+
+                  APP_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').apps.length))")
+                  PIN_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').pinned.length))")
+                  echo "::group::Import ${APP_COUNT} apps + ${PIN_COUNT} pinned into $NEW_ADDR"
+                  pnpm tsx scripts/import-registry-state.ts "$SNAPSHOT"
+                  echo "::endgroup::"
+
+                  echo "::notice::Migrated ${APP_COUNT} apps + ${PIN_COUNT} pinned from $OLD_ADDR to $NEW_ADDR"
+              env:
+                  MNEMONIC: ${{ secrets.MNEMONIC }}
+
+            # Keep the snapshot as a workflow artifact so a failed import can
+            # be replayed manually without re-exporting from the prior chain.
+            - name: Upload migration snapshot
+              if: always() && hashFiles('migration/snapshot-*.json') != ''
+              uses: actions/upload-artifact@v4
+              with:
+                  name: registry-snapshot-${{ github.run_id }}
+                  path: migration/snapshot-*.json
+                  retention-days: 30
+
+            # cdm deploy updates cdm.json with the new contract address and ABI.
+            # Committing this to main triggers deploy-frontend.yml so the frontend
+            # picks up the new contract address.
+            - name: Commit updated cdm.json
+              id: commit-cdm-json
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git add cdm.json
+                  if git diff --cached --quiet; then
+                    echo "pushed=false" >> "$GITHUB_OUTPUT"
+                    echo "No cdm.json changes to commit"
+                  else
+                    git commit -m "chore: update cdm.json after contract deploy"
+                    git push
+                    echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+                    echo "pushed=true" >> "$GITHUB_OUTPUT"
+                    echo "::notice::Pushed updated cdm.json — frontend deploy will follow automatically."
+                  fi
+
+            # Keep the CLI's bundled contract ABI/metadata fresh after the
+            # live Paseo registry changes. The CLI workflow handles no-op
+            # checks and performs the patch release.
+            - name: Trigger CLI contract manifest release
+              if: |
+                  env.CDM_NETWORK == 'paseo'
+                  && (
+                    steps.commit-cdm-json.outputs.pushed == 'true'
+                    || (github.event_name == 'workflow_dispatch' && inputs.force_cli_manifest_release)
+                  )
+              env:
+                  PLAYGROUND_CLI_DISPATCH_TOKEN: ${{ secrets.PLAYGROUND_CLI_DISPATCH_TOKEN }}
+                  SOURCE_SHA: ${{ steps.commit-cdm-json.outputs.commit_sha || github.sha }}
+                  FORCE_CLI_MANIFEST_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.force_cli_manifest_release || false }}
+              run: |
+                  if [ -z "$PLAYGROUND_CLI_DISPATCH_TOKEN" ]; then
+                    echo "::error::PLAYGROUND_CLI_DISPATCH_TOKEN secret is required to dispatch paritytech/playground-cli."
+                    exit 1
+                  fi
+
+                  curl -fsSL \
+                    -X POST \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "Authorization: Bearer ${PLAYGROUND_CLI_DISPATCH_TOKEN}" \
+                    -H "X-GitHub-Api-Version: 2022-11-28" \
+                    https://api.github.com/repos/paritytech/playground-cli/dispatches \
+                    --data "$(cat <<EOF
+                  {
+                    "event_type": "playground-registry-deployed",
+                    "client_payload": {
+                      "network": "${CDM_NETWORK}",
+                      "source_repository": "${GITHUB_REPOSITORY}",
+                      "source_run_id": "${GITHUB_RUN_ID}",
+                      "source_run_attempt": "${GITHUB_RUN_ATTEMPT}",
+                      "source_sha": "${SOURCE_SHA}",
+                      "source_trigger_sha": "${GITHUB_SHA}",
+                      "source_ref": "${GITHUB_REF_NAME}",
+                      "force_cli_manifest_release": ${FORCE_CLI_MANIFEST_RELEASE}
+                    }
+                  }
+                  EOF
+                  )"
+
+                  echo "::notice::Dispatched playground-cli contract manifest release."
+
+    # ------------------------------------------------------------------
+    # PR comments — sticky build status feedback
+    # ------------------------------------------------------------------
+    comment-build-success:
+        needs: [detect-changes, build]
+        if: github.event_name == 'pull_request' && needs.build.result == 'success'
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Comment Build Success
+        steps:
+            - name: Comment on PR
+              uses: marocchino/sticky-pull-request-comment@v2
+              with:
+                  header: contract-build
+                  message: |
+                      ## Contract Build
+
+                      | Contract | Status |
+                      |:--------:|:------:|
+                      | **Registry** | Compiled |
+
+                      <sub>Contract will be deployed to **${{ env.CDM_NETWORK }}** when merged to main. [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})</sub>
+
+    comment-build-failure:
+        needs: [detect-changes, build]
+        if: github.event_name == 'pull_request' && needs.build.result == 'failure'
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        name: Comment Build Failure
+        steps:
+            - name: Comment on PR
+              uses: marocchino/sticky-pull-request-comment@v2
+              with:
+                  header: contract-build
+                  message: |
+                      ## Contract Build Failed
+
+                      | Contract | Status |
+                      |:--------:|:------:|
+                      | **Registry** | Failed |
+
+                      [**View workflow run**](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+                      ---
+                      <sub>Fix contract compilation errors and push again to retry.</sub>

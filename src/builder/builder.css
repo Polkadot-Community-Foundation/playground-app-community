@@ -1,0 +1,2023 @@
+/* Copyright (C) Parity Technologies (UK) Ltd.
+ * SPDX-License-Identifier: GPL-3.0-or-later */
+
+/* Builder chrome, scoped under .builder-root so nothing leaks into the
+ * playground shell. Chrome tokens alias playground's design system (the
+ * user-facing SITE preview styles below keep their own look — they mirror
+ * the deployed artifact, not app chrome).
+ *
+ * The builder's bars/sheets stay viewport-fixed (a transformed ancestor
+ * would re-anchor them to the element box, which scrolls away on long
+ * pages); on desktop they're inset past the 220px rail instead — see the
+ * min-width media block below. */
+
+.builder-root {
+    --chrome-bg: rgba(12, 10, 9, 0.85);
+    --chrome-surface: var(--color-surface-raised, #1d1d1d);
+    --chrome-border: var(--color-border-strong, rgba(255, 255, 255, 0.12));
+    --chrome-text: var(--color-text-primary, #fafaf9);
+    --chrome-text2: var(--color-text-secondary, #a8a29e);
+    --accent: var(--color-accent, #ffffff);
+    --accent-hover: var(--grey-200, #e7e5e4);
+    /* Text sitting ON an accent surface. The vendored CSS hardcoded #fff
+       here (its accent was pink); the playground accent is WHITE, so every
+       accent-background element must pair with this token instead — same
+       concept as shellCss's computed accentContrast for the artifact. */
+    --accent-contrast: var(--color-bg, #0c0a09);
+    /* Status colors on the app's families: teal (--color-accent-dim's hue)
+       and a danger red for destructive draft actions. */
+    --ok: #34d399;
+    --danger: #ff6464;
+    --radius: var(--r-card, 8px);
+    --vv-bottom: 0px;
+    --vv-bottom-fallback: 0px;
+}
+.builder-root.in-iframe { --vv-bottom-fallback: 60px; }
+
+.builder-root,
+.builder-root *,
+.builder-root *::before,
+.builder-root *::after { box-sizing: border-box; }
+.builder-root * { margin: 0; padding: 0; }
+
+.builder-root {
+    min-height: 100dvh;
+    background: var(--color-bg, #0c0a09);
+    color: var(--chrome-text);
+    font-family: var(--font-sans, "Inter Variable", system-ui, sans-serif);
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+}
+
+/* Hybrid layout, narrow half: ≤820px playground's rail becomes a fixed
+ * bottom bar that collides with the builder's own bottom nav — the builder
+ * takes over fullscreen there (rail + ticker hidden, the same treatment the
+ * leaderboard's fullscreen mode uses). Keyed on a body class ONLY the
+ * builder route sets (and removes on unmount). */
+@media (max-width: 820px) {
+    body.is-builder-active .left-rail { display: none; }
+    body.is-builder-active .event-ticker { display: none; }
+    /* padding-top clears the fixed ticker — hidden here, so zero it too
+       (same as body.is-leader-fullscreen does in App.css). */
+    body.is-builder-active .app-shell { padding-top: 0; padding-bottom: 0; }
+}
+
+/* ── The live site (the deploy artifact's mirror) ───────────────────────── */
+
+.builder-root .site {
+    min-height: 100dvh;
+    padding: 80px 24px 140px;
+    color: #f5f5f5;
+    line-height: 1.5;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+.builder-root .site-inner { max-width: 640px; margin: 0 auto; }
+
+.builder-root .site-header {
+    font-size: clamp(36px, 8vw, 56px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin: 0 0 16px;
+}
+.builder-root .site-paragraph { margin: 0 0 16px; }
+.builder-root .site-link { text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+/* Anchor only — preview view renders real <a>s; the artifact has a:hover. */
+.builder-root a.site-link:hover { opacity: 0.8; }
+.builder-root .site-link-url { font-size: 12px; color: var(--chrome-text2); margin-left: 8px; word-break: break-all; }
+/* Images are always centered; sizes mirror the artifact's img-* rules. */
+.builder-root .site-image { max-width: 100%; height: auto; border-radius: 12px; margin: 16px auto; display: block; }
+.builder-root .site-image.is-small { width: min(160px, 100%); }
+.builder-root .site-image.is-medium { width: min(512px, 100%); }
+.builder-root .site-image.is-circle {
+    aspect-ratio: 1;
+    object-fit: cover;
+    border-radius: 50%;
+}
+.builder-root .site-image.is-square { border-radius: 0; }
+.builder-root .site-image-placeholder.is-small {
+    width: min(160px, 100%);
+    aspect-ratio: 1;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+}
+.builder-root .site-image-placeholder.is-medium {
+    width: min(512px, 100%);
+    margin-left: auto;
+    margin-right: auto;
+}
+.builder-root .site-image-placeholder.is-circle { border-radius: 50%; }
+.builder-root .site-image-placeholder.is-square { border-radius: 0; }
+
+.builder-root .site-image-placeholder {
+    border: 1px dashed color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 80%);
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    color: color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 60%);
+    margin: 16px 0;
+}
+/* Active upload: solid pulsing border + spinner so the placeholder reads as
+   busy, not merely empty. */
+.builder-root .site-image-placeholder.is-uploading {
+    border-style: solid;
+    border-color: color-mix(in srgb, var(--site-accent, #e6007a), transparent 40%);
+    color: color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 30%);
+    animation: upload-pulse 1.6s ease-in-out infinite;
+}
+.builder-root .upload-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 8px;
+    vertical-align: -1px;
+    border: 2px solid color-mix(in srgb, var(--site-accent, #e6007a), transparent 70%);
+    border-top-color: var(--site-accent, #e6007a);
+    border-radius: 50%;
+    animation: upload-spin 0.9s linear infinite;
+}
+@keyframes upload-spin {
+    to { transform: rotate(360deg); }
+}
+@keyframes upload-pulse {
+    50% { border-color: color-mix(in srgb, var(--site-accent, #e6007a), transparent 75%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .builder-root .upload-spinner { animation: none; }
+    .builder-root .site-image-placeholder.is-uploading { animation: none; }
+}
+.builder-root .image-controls { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.builder-root .image-upload {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--chrome-border);
+    border-radius: 999px;
+    color: var(--chrome-text);
+    font-size: 12px;
+    cursor: pointer;
+    align-self: flex-start;
+    transition: border-color 0.15s, background 0.15s;
+}
+.builder-root .image-upload:hover { border-color: rgba(255,255,255,0.3); }
+.builder-root .image-upload input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.builder-root .image-upload-error {
+    margin: 0;
+    padding: 8px 10px;
+    background: rgba(255, 60, 60, 0.08);
+    border: 1px solid rgba(255, 60, 60, 0.3);
+    border-radius: 6px;
+    color: var(--danger);
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.builder-root .site-divider { border: 0; border-top: 1px solid var(--site-divider, rgba(255,255,255,0.15)); margin: 32px 0; }
+/* Same treatment as the artifact's `footer` rule in shellCss. */
+.builder-root .site-footer { margin-top: 64px; opacity: 0.4; font-size: 12px; }
+.builder-root .site-footer a { text-decoration: underline; text-underline-offset: 3px; }
+
+.builder-root .site-tip {
+    color: color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 60%);
+    font-size: 13px;
+    font-style: italic;
+    margin-top: 32px;
+    padding: 12px 14px;
+    border: 1px dashed var(--site-divider, rgba(255,255,255,0.15));
+    border-radius: 10px;
+}
+
+.builder-root .block { position: relative; }
+
+/* Per-block style toggles (edit view only) — Text/Button, Photo/Avatar. */
+.builder-root .variant-toggle {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    background: rgba(0,0,0,0.35);
+    border: 1px solid var(--chrome-border);
+    border-radius: 999px;
+}
+.builder-root .variant-toggle button {
+    border: 0;
+    background: transparent;
+    color: var(--chrome-text2);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    padding: 0 8px;
+    height: 18px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+.builder-root .variant-toggle button:hover { color: var(--chrome-text); }
+.builder-root .variant-toggle button.is-active {
+    background: rgba(255,255,255,0.15);
+    color: var(--chrome-text);
+}
+
+/* Corner controls: always faintly visible (mobile has no hover), full on
+   hover/focus. Edit pencil sits left of the remove ×. */
+.builder-root .block-corner {
+    position: absolute;
+    top: 0; right: 0;
+    background: color-mix(in srgb, var(--site-foreground, #f5f5f5) 14%, transparent);
+    border: 1px solid var(--site-divider, rgba(255,255,255,0.15));
+    color: color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 40%);
+    width: 24px; height: 24px;
+    border-radius: 999px;
+    font-size: 14px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.35;
+    transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+    z-index: 1;
+}
+.builder-root .block:hover .block-corner,
+.builder-root .block:focus-within .block-corner { opacity: 1; }
+.builder-root .block-remove:hover { color: var(--danger); border-color: var(--danger); }
+.builder-root .block-edit { right: 30px; }
+.builder-root .block-edit:hover { color: var(--site-foreground, #f5f5f5); }
+
+/* Tap-to-edit affordance on structured blocks in edit mode. */
+.builder-root .block-tap { cursor: pointer; }
+.builder-root .site.is-editing .block-tap:hover { outline: 1px dashed color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 70%); outline-offset: 4px; }
+
+/* Plain paragraphs wrapping an inline <a> — matches the artifact's p > a.
+   (The old flex layout served the removed inline label+url editors.) */
+.builder-root .block-link { margin: 0 0 16px; }
+/* Narrow + centred, linktree-style — mirrors p.pill { max-width; margin auto }
+   in the artifact's shellCss. */
+.builder-root .block-link.is-pill { margin: 12px auto; max-width: 420px; }
+/* Mirrors the artifact's p.pill rules in shellCss — keep them in sync. */
+.builder-root .block-link.is-pill .site-link {
+    display: block;
+    text-align: center;
+    padding: 14px 24px;
+    border-radius: 12px;
+    text-decoration: none;
+    font-weight: 600;
+}
+.builder-root .block-link.is-pill .site-link-url {
+    text-align: center;
+}
+
+/* ── Inline-edit affordances (apply only in edit view) ──────────────────── */
+
+/* VISIBLE at rest — a transparent outline that only appeared on hover left
+   first-time users (and every touch user) with no hint the page is editable.
+   Tinted with the site's own accent so it adapts to the user's theme. */
+.builder-root .site.is-editing .editable {
+    outline: 1px dashed color-mix(in srgb, var(--site-accent, #e6007a), transparent 65%);
+    outline-offset: 4px;
+    border-radius: 4px;
+    transition: outline-color 0.15s, background-color 0.15s;
+    cursor: text;
+}
+.builder-root .site.is-editing .editable:hover {
+    outline-color: color-mix(in srgb, var(--site-accent, #e6007a), transparent 30%);
+}
+.builder-root .site.is-editing .editable:focus {
+    outline: 1px solid var(--site-accent, #e6007a);
+    outline-offset: 4px;
+}
+.builder-root .site.is-editing .editable:empty::before {
+    content: attr(data-placeholder);
+    color: color-mix(in srgb, var(--site-foreground, #f5f5f5), transparent 70%);
+}
+
+/* ── Floating action bar (edit view only) — sits above the bottom nav pill ─ */
+
+.builder-root .float-bottom {
+    position: fixed;
+    left: 50%;
+    bottom: calc(76px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Undo/redo satellites — same chrome family as the bar, bigger touch target. */
+.builder-root .float-circle {
+    width: 40px; height: 40px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    background: var(--chrome-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--chrome-border);
+    color: var(--chrome-text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.15s, opacity 0.15s;
+}
+.builder-root .float-circle svg { width: 18px; height: 18px; }
+.builder-root .float-circle:hover { border-color: rgba(255,255,255,0.3); }
+.builder-root .float-circle:disabled { opacity: 0.35; cursor: default; }
+.builder-root .float-circle:disabled:hover { border-color: var(--chrome-border); }
+
+.builder-root .action-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: var(--chrome-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--chrome-border);
+    border-radius: 999px;
+}
+
+.builder-root .swatch {
+    position: relative;
+    width: 32px; height: 32px;
+    border-radius: 999px;
+    border: 2px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+/* In-DOM color picker (native <input type="color"> is dead in the Android
+   product WebView — see StyleRow). Expands under the row it belongs to. */
+.builder-root .color-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 4px 14px 10px;
+}
+.builder-root .color-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.builder-root .color-preset {
+    width: 28px; height: 28px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.builder-root .color-preset.is-selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--chrome-surface), 0 0 0 4px var(--accent);
+}
+.builder-root .color-hex-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+}
+.builder-root .color-hex {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    background: var(--color-bg, #0c0a09);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    color: var(--chrome-text);
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 12px;
+    text-transform: lowercase;
+}
+.builder-root .color-hex.is-invalid {
+    border-color: var(--danger);
+}
+.builder-root .color-done {
+    flex-shrink: 0;
+    padding: 0 14px;
+    background: var(--accent);
+    border: 0;
+    border-radius: 8px;
+    color: var(--accent-contrast);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.builder-root .color-done:hover { background: var(--accent-hover); }
+.builder-root .color-done:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+.builder-root .color-hex-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 11px;
+}
+.builder-root .sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+.builder-root .colors-wrap { position: relative; }
+.builder-root .colors-menu {
+    position: absolute;
+    bottom: 100%; left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 8px;
+    min-width: 190px;
+    padding: 6px 0;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    z-index: 30;
+}
+.builder-root .style-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px;
+    font-size: 13px;
+}
+.builder-root .style-row-label { flex: 1; }
+.builder-root .style-auto {
+    background: transparent;
+    border: 1px solid var(--chrome-border);
+    border-radius: 999px;
+    color: var(--chrome-text2);
+    font: inherit;
+    font-size: 11px;
+    padding: 2px 8px;
+    cursor: pointer;
+}
+.builder-root .style-auto:hover { color: var(--chrome-text); }
+
+.builder-root .font-wrap { position: relative; }
+.builder-root .font-btn { font-size: 12px; font-weight: 600; }
+.builder-root .font-menu {
+    position: absolute;
+    bottom: 100%; left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 8px;
+    min-width: 140px;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    overflow: hidden;
+    z-index: 30;
+}
+.builder-root .font-menu button {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.builder-root .font-menu button:hover { background: rgba(255,255,255,0.05); }
+.builder-root .font-menu button.is-active { background: rgba(255,255,255,0.1); }
+
+.builder-root .font-size-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 10px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+.builder-root .font-size-row button {
+    width: 28px;
+    flex-shrink: 0;
+    padding: 5px 0;
+    background: transparent;
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    color: var(--chrome-text2);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1;
+    text-align: center;
+    cursor: pointer;
+}
+.builder-root .font-size-row button:hover { color: var(--chrome-text); }
+.builder-root .font-size-row .font-size-value {
+    flex: 1;
+    width: auto;
+    border-color: transparent;
+    color: var(--chrome-text);
+}
+.builder-root .font-size-row .font-size-value:hover { border-color: var(--chrome-border); }
+.builder-root .font-align-row button { width: auto; flex: 1; }
+.builder-root .font-size-row input {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 0;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 13px;
+    text-align: center;
+    outline: none;
+}
+
+.builder-root .action-btn {
+    width: 40px; height: 40px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--chrome-border);
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.builder-root .action-btn:hover { border-color: rgba(255,255,255,0.3); }
+.builder-root .action-btn:disabled { opacity: 0.35; cursor: default; }
+.builder-root .action-btn:disabled:hover { border-color: var(--chrome-border); }
+
+/* Subtitle under each action-bar control — mirrors .nav-tab-label */
+.builder-root .action-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.builder-root .action-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    line-height: 1;
+    color: var(--chrome-text2);
+}
+
+.builder-root .add-wrap { position: relative; }
+.builder-root .add-menu {
+    position: absolute;
+    bottom: 100%; right: 0;
+    margin-bottom: 8px;
+    min-width: 140px;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    overflow: hidden;
+    z-index: 30;
+}
+.builder-root .add-menu button {
+    display: block;
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: 0;
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+}
+.builder-root .add-menu button:hover { background: rgba(255,255,255,0.05); }
+
+.builder-root .pane-btn { font-size: 11px; font-weight: 600; }
+.builder-root .action-btn.is-active {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.3);
+}
+
+
+/* ── Block property bottom sheet (edit view) ────────────────────────────── */
+
+.builder-root .sheet-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+.builder-root .sheet {
+    width: 100%;
+    max-width: 520px;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-bottom: 0;
+    border-radius: 16px 16px 0 0;
+    padding: 20px 20px calc(20px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+}
+.builder-root .sheet-title {
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+}
+.builder-root .sheet-field { display: flex; flex-direction: column; gap: 5px; }
+.builder-root .sheet-field > span {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--chrome-text2);
+}
+.builder-root .sheet-field input {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--chrome-border);
+    border-radius: 10px;
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 16px; /* ≥16px so iOS doesn't zoom on focus */
+    padding: 10px 12px;
+    outline: none;
+}
+.builder-root .sheet-field input:focus { border-color: rgba(52, 211, 153, 0.4); }
+/* Media tile: the image IS the picker. Empty = dropzone, filled = preview
+   with a Replace chip, uploading = progress in place. */
+.builder-root .sheet-media {
+    position: relative;
+    display: block;
+    height: 160px;
+    border: 1px dashed var(--chrome-border);
+    border-radius: 12px;
+    background: rgba(0,0,0,0.25);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.builder-root .sheet-media:hover { border-color: rgba(255,255,255,0.3); }
+.builder-root .sheet-media.has-img { border-style: solid; }
+.builder-root .sheet-media input[type="file"] {
+    position: absolute;
+    width: 1px; height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+.builder-root .sheet-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.builder-root .sheet-media-empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px;
+    text-align: center;
+    color: var(--chrome-text2);
+    font-size: 13px;
+}
+.builder-root .sheet-media-empty .deploy-progress { width: 100%; }
+.builder-root .sheet-media-note { font-size: 11px; opacity: 0.8; }
+.builder-root .sheet-media-chip {
+    position: absolute;
+    right: 8px; bottom: 8px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.6);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.builder-root .sheet-link-toggle {
+    align-self: flex-start;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--chrome-text2);
+    font: inherit;
+    font-size: 12px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    cursor: pointer;
+}
+.builder-root .sheet-link-toggle:hover { color: var(--chrome-text); }
+.builder-root .sheet-actions { display: flex; gap: 10px; margin-top: 6px; }
+.builder-root .sheet-delete {
+    flex: 1;
+    padding: 12px;
+    border-radius: 10px;
+    background: transparent;
+    border: 1px solid rgba(255, 60, 60, 0.4);
+    color: var(--danger);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.builder-root .sheet-delete:hover { border-color: var(--danger); }
+.builder-root .sheet-done {
+    flex: 2;
+    padding: 12px;
+    border-radius: 10px;
+    border: 0;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.builder-root .sheet-done:hover { background: var(--accent-hover); }
+
+/* ── Bottom centered nav pill (3 tabs) ──────────────────────────────────── */
+
+.builder-root .bottom-nav {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: calc(12px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    z-index: 25;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.builder-root .bottom-nav-pill {
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px;
+    background: var(--chrome-bg);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--chrome-border);
+    border-radius: 999px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.builder-root .nav-tab {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 68px;
+    padding: 6px 14px;
+    background: transparent;
+    border: 0;
+    border-radius: 999px;
+    color: var(--chrome-text2);
+    font: inherit;
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.builder-root .nav-tab:hover { color: var(--chrome-text); }
+.builder-root .nav-tab.is-active {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--chrome-text);
+}
+.builder-root .nav-tab svg { display: block; }
+.builder-root .nav-tab-label { line-height: 1; }
+/* Back to the /builder landing — floating at the editor's top-left. Sized
+   and positioned to sit FULLY INSIDE the code card's 40px filename header
+   band (card top 12 + 4px inset), so on md/html views it reads as the
+   header's own back control; in blocks/preview it floats on its own. */
+.builder-root .back-float {
+    position: fixed;
+    top: calc(16px + env(safe-area-inset-top));
+    left: 22px;
+    width: 32px;
+    height: 32px;
+    z-index: 25;
+}
+
+/* ── Deploy panel (visible in deploy view) ──────────────────────────────── */
+
+.builder-root .deploy-panel {
+    position: fixed;
+    left: 50%;
+    bottom: calc(76px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    transform: translateX(-50%);
+    width: min(420px, calc(100% - 32px));
+    max-height: calc(100dvh - 160px);
+    overflow-y: auto;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: 16px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+    z-index: 24;
+}
+
+/* Panel heading in the app's serif voice (modal titles are DM Serif 24px). */
+.builder-root .deploy-title {
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 22px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+.builder-root .deploy-field { display: flex; flex-direction: column; gap: 8px; }
+/* Matches the app's .form-label recipe (12px / 600 / uppercase). */
+.builder-root .field-label {
+    color: var(--chrome-text2);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.builder-root .field { display: flex; flex-direction: column; gap: 6px; }
+.builder-root .field input[type="text"] {
+    width: 100%;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: var(--chrome-text);
+    font: inherit;
+    /* Technical strings (.dot name, URL) get the app's code voice, like the
+       install widget. */
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 13px;
+}
+.builder-root .field input[type="text"]:focus { outline: 0; border-color: rgba(52, 211, 153, 0.4); }
+.builder-root .field input[type="text"]:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* "List in Apps" metadata panel: prefilled name/description + a single-select
+   tag, then Publish. Reuses the .field shell; adds a textarea + tag pills. */
+.builder-root .list-modal { display: flex; flex-direction: column; gap: 14px; }
+.builder-root .field textarea {
+    width: 100%;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.4;
+    resize: vertical;
+    min-height: 64px;
+}
+.builder-root .field textarea:focus { outline: 0; border-color: rgba(52, 211, 153, 0.4); }
+.builder-root .field textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Single name field: the input and its fixed ".dot" suffix share one box so
+   the name reads as "<name>.dot" without a redundant preview line. */
+.builder-root .name-input {
+    display: flex;
+    align-items: center;
+    background: rgba(0,0,0,0.4);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    padding: 0 12px;
+}
+.builder-root .name-input:focus-within { border-color: rgba(52, 211, 153, 0.4); }
+.builder-root .name-input input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    padding: 9px 0;
+    color: var(--chrome-text);
+    font: inherit;
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 13px;
+}
+.builder-root .name-input input[type="text"]:focus { outline: 0; }
+.builder-root .name-input input[type="text"]:disabled { opacity: 0.5; cursor: not-allowed; }
+.builder-root .name-suffix {
+    flex: 0 0 auto;
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 13px;
+    color: var(--chrome-text2);
+    opacity: 0.7;
+}
+.builder-root .name-field { display: flex; flex-direction: column; gap: 8px; }
+.builder-root .name-rules-link { font-size: 11px; opacity: 0.85; }
+
+/* Honestly-labeled text toggle at the foot of the checklist — reveals the
+   developer block (technical per-row detail + dev account + diagnostics).
+   Left-aligned so it reads as an in-flow action, not a floating glyph.
+   Accent-tinted while active. */
+.builder-root .check-details-toggle {
+    align-self: flex-start;
+    margin-top: 4px;
+    border: none;
+    background: transparent;
+    padding: 4px 0;
+    font-size: 11px;
+    color: var(--chrome-text2);
+    opacity: 0.7;
+    cursor: pointer;
+}
+.builder-root .check-details-toggle:hover { opacity: 1; }
+.builder-root .check-details-toggle.active { color: var(--accent); opacity: 1; }
+
+/* Developer block revealed inside the checklist's deep-details view: account
+   address, build/host diagnostic, and the dev-account toggle. */
+.builder-root .check-dev {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--chrome-border);
+}
+.builder-root .check-dev-addr {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    color: var(--chrome-text2);
+    font-size: 11px;
+}
+.builder-root .check-dev-addr code {
+    word-break: break-all;
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+}
+.builder-root .check-dev-addr:hover { color: var(--chrome-text); }
+.builder-root .check-dev-diag {
+    margin: 0;
+    color: var(--chrome-text2);
+    font-size: 11px;
+    line-height: 1.4;
+    opacity: 0.75;
+    word-break: break-word;
+}
+.builder-root .check-dev-toggle { font-size: 12px; }
+
+/* "Choosing a .dot name" modal prose. */
+.builder-root .name-rules {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    color: var(--chrome-text2);
+    font-size: 13px;
+    line-height: 1.55;
+}
+.builder-root .name-rules strong { color: var(--chrome-text); }
+.builder-root .name-rules code {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--chrome-text);
+}
+.builder-root .name-rules-tip {
+    color: var(--ok);
+    margin: 0;
+}
+
+.builder-root .checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--chrome-text);
+}
+/* Custom-drawn: accent-color's checkmark contrast is UA-dependent — desktop
+   Chromium auto-picks a dark mark against the white accent, but Android's
+   WebView painted it white-on-white. Draw the mark explicitly in
+   --accent-contrast instead of trusting the engine. */
+.builder-root .checkbox input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    border: 1px solid var(--chrome-border);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    display: inline-grid;
+    place-content: center;
+    transition: background 0.15s, border-color 0.15s;
+}
+.builder-root .checkbox input:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+.builder-root .checkbox input:checked::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    background: var(--accent-contrast);
+    clip-path: polygon(14% 44%, 0 64%, 46% 100%, 100% 18%, 82% 2%, 42% 66%);
+}
+.builder-root .checkbox input:disabled { cursor: not-allowed; opacity: 0.5; }
+.builder-root .checkbox-hint { color: var(--chrome-text2); opacity: 0.7; }
+
+.builder-root .url-preview {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    color: var(--chrome-text);
+    background: rgba(0,0,0,0.3);
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--chrome-border);
+    word-break: break-all;
+}
+
+.builder-root .hint { color: var(--chrome-text2); font-size: 12px; line-height: 1.5; }
+.builder-root .hint strong { color: var(--chrome-text); }
+.builder-root .hint.subtle { opacity: 0.7; }
+/* Inline text-link button (e.g. the pre-flight "Re-check" escape hatch). */
+.builder-root .link-button {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: var(--chrome-text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+.builder-root .link-button:hover { opacity: 0.8; }
+
+.builder-root .pill {
+    height: 36px;
+    padding: 0 18px;
+    border-radius: 999px;
+    border: 1px solid var(--chrome-border);
+    background: var(--chrome-bg);
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: flex-start;
+}
+.builder-root .pill:hover:not(:disabled) { border-color: rgba(255,255,255,0.25); }
+.builder-root .pill:disabled { opacity: 0.4; cursor: not-allowed; }
+.builder-root .pill-primary {
+    background: var(--accent);
+    color: var(--accent-contrast);
+    border-color: transparent;
+    height: 44px;
+    padding: 0 24px;
+    font-size: 14px;
+}
+/* Mirrors the app's .btn-publish: white at rest, teal + glow on hover. */
+.builder-root .pill-primary:hover:not(:disabled) {
+    background: #5de8b5;
+    box-shadow: 0 0 20px rgba(52, 211, 153, 0.25);
+}
+.builder-root .pill-secondary { background: var(--chrome-surface); }
+.builder-root .pill-wide { width: 100%; align-self: stretch; }
+
+.builder-root .deploy-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px 12px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+}
+.builder-root .progress-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--chrome-text2);
+    font-size: 11px;
+    line-height: 1.2;
+}
+.builder-root .progress-meta span:last-child {
+    color: var(--chrome-text);
+    font-weight: 600;
+    text-align: right;
+}
+.builder-root .progress-bar {
+    display: flex;
+    gap: 4px;
+    width: 100%;
+}
+.builder-root .progress-segment {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 8px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.builder-root .progress-segment.is-complete {
+    background: var(--accent);
+    border-color: transparent;
+}
+.builder-root .progress-segment.is-active {
+    /* Active segment is the TRACK; .progress-segment-fill grows inside it to
+       show eased within-step progress (see progress.ts / StepProgress). */
+    background: rgba(255,255,255,0.12);
+    border-color: transparent;
+    position: relative;
+    overflow: hidden;
+}
+.builder-root .progress-segment-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    /* Smooth the 150ms sampling into a continuous creep. */
+    transition: width 0.18s linear;
+    /* Keep the "alive" pulse the active segment used to carry. */
+    animation: progress-pulse 1.2s ease-in-out infinite;
+}
+
+.builder-root .status {
+    color: var(--chrome-text2);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.builder-root .progress-phone-hint {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+/* Reassurance for a step running long — muted, not alarming (the accent weight
+   is reserved for the actionable "check your phone" hint above). */
+.builder-root .progress-slow-hint {
+    color: var(--color-text-secondary, #a8a29e);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+@keyframes progress-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .builder-root .progress-segment-fill {
+        animation: none;
+        transition: none;
+    }
+}
+
+/* "copy" affordance label (next to a copyable string). */
+.builder-root .copy-state {
+    flex: 0 0 auto;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+}
+
+/* Pre-flight checklist — read-only readiness checks above the Deploy button. */
+.builder-root .preflight {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 10px;
+    border: 1px solid var(--chrome-border);
+}
+.builder-root .check-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.builder-root .check-icon {
+    flex: 0 0 16px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 11px;
+}
+.builder-root .check-ok .check-icon { color: var(--ok); }
+.builder-root .check-warn .check-icon { color: #fbbf24; }
+.builder-root .check-fail .check-icon { color: var(--danger); }
+.builder-root .check-label {
+    color: var(--chrome-text2);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    flex: 0 0 96px;
+    padding-top: 1px;
+}
+.builder-root .check-detail { color: var(--chrome-text); word-break: break-word; }
+.builder-root .check-fail .check-detail { color: var(--danger); }
+.builder-root .check-detail a { color: var(--accent); text-decoration: underline; }
+.builder-root .check-detail a:hover { text-decoration: none; }
+.builder-root .check-recheck {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+}
+.builder-root .check-recheck:hover { text-decoration: none; }
+.builder-root .check-recheck:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+.builder-root .result {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    background: rgba(0,0,0,0.3);
+    border-radius: 10px;
+    border: 1px solid var(--chrome-border);
+}
+
+/* Full-success panel: friendly, centered, on the app's success teal. The
+   technical rows (CID/gateway/bytes) only render on the partial state. */
+.builder-root .result-success {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 22px 18px;
+    text-align: center;
+    background: rgba(52, 211, 153, 0.08);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    border-radius: 10px;
+}
+.builder-root .result-success-check {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--ok);
+    color: var(--accent-contrast);
+}
+.builder-root .result-success-title {
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 20px;
+    letter-spacing: -0.02em;
+}
+.builder-root .result-success-domain {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 14px;
+    color: var(--ok);
+    word-break: break-all;
+}
+/* Icon-only copy affordance, matching playground's InstallWidget /
+   card-copy pattern (CopyIcon -> CheckIcon swap, no chrome of its own). */
+.builder-root .result-success-copy {
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    background: transparent;
+    padding: 4px;
+    color: var(--chrome-text2);
+    cursor: pointer;
+    transition: color 0.15s;
+}
+.builder-root .result-success-copy:hover {
+    color: var(--chrome-text);
+}
+.builder-root .result-success-copy.copied {
+    color: var(--ok);
+}
+.builder-root .result-success-open {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 40px;
+    padding: 0 24px;
+    margin-top: 4px;
+    border-radius: 999px;
+    background: var(--ok);
+    color: var(--accent-contrast);
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: background 0.15s, box-shadow 0.15s;
+}
+.builder-root .result-success-open:hover {
+    background: #5de8b5;
+    box-shadow: 0 0 20px rgba(52, 211, 153, 0.25);
+}
+/* Secondary "Open your site": while List in Apps is still the pending
+   primary, Open steps back to an outline pill so only one filled CTA
+   competes for attention at a time. */
+.builder-root .result-success-open.secondary {
+    background: transparent;
+    color: var(--ok);
+    border: 1px solid rgba(52, 211, 153, 0.5);
+}
+.builder-root .result-success-open.secondary:hover {
+    background: rgba(52, 211, 153, 0.1);
+    box-shadow: none;
+}
+/* "Going live" wait indicator — replaces the old disabled pill. A quiet
+   status line with a gently pulsing dot; it's a wait state, not a button. */
+.builder-root .result-success-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--chrome-text2);
+}
+.builder-root .result-success-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    animation: builder-going-live 1.4s ease-in-out infinite;
+}
+@keyframes builder-going-live {
+    50% {
+        opacity: 0.3;
+    }
+}
+/* Secondary action: ghost pill in the panel's teal family. */
+.builder-root .result-success-another {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    padding: 0 18px;
+    border-radius: 999px;
+    background: transparent;
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    color: var(--chrome-text);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.builder-root .result-success-another:hover {
+    border-color: rgba(52, 211, 153, 0.6);
+    background: rgba(52, 211, 153, 0.08);
+}
+
+.builder-root .result-success-hint { font-size: 11px; color: var(--chrome-text2); }
+
+.builder-root .result-success-listed {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgb(52, 211, 153);
+}
+/* The listed confirmation doubles as a link to the Apps grid — underline on
+   hover is the only affordance; at rest it stays a clean confirmation line. */
+.builder-root a.result-success-listed { text-decoration: none; }
+.builder-root a.result-success-listed:hover { text-decoration: underline; }
+
+.builder-root .result-note {
+    color: var(--chrome-text2); font-size: 12px; line-height: 1.5;
+    padding-top: 8px;
+    border-top: 1px solid var(--chrome-border);
+}
+.builder-root .result-note.success { color: var(--ok); }
+.builder-root .result-note a { color: inherit; text-decoration: underline; }
+.builder-root .result-note a:hover { text-decoration: none; }
+.builder-root .result-note code {
+    background: rgba(0,0,0,0.4);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+/* Failure result cards (partial = stored-but-no-domain; error = total). They
+   stay short and jargon-free; raw detail lives behind "View logs". */
+.builder-root .result-partial { border-color: rgba(52, 211, 153, 0.3); }
+.builder-root .result-error { border-color: rgba(255, 60, 60, 0.3); }
+.builder-root .result-fail-title {
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+/* Positive headline for the stored-but-no-domain card: the site IS live. */
+.builder-root .result-live-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    color: var(--ok);
+}
+
+/* Temporary (gateway) link offered when the domain didn't register. */
+.builder-root .result-link-row { display: flex; align-items: center; gap: 8px; }
+.builder-root .result-link {
+    flex: 1;
+    min-width: 0;
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 13px;
+    word-break: break-word;
+}
+.builder-root .result-link:hover { text-decoration: underline; }
+.builder-root .result-link-copy {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    background: transparent;
+    padding: 4px;
+    color: var(--chrome-text2);
+    cursor: pointer;
+}
+.builder-root .result-link-copy:hover { color: var(--chrome-text); }
+.builder-root .result-link-copy.copied { color: var(--ok); }
+
+/* Plain text-link button ("View logs"). */
+.builder-root .link-btn {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    padding: 0;
+    color: var(--accent);
+    font: inherit;
+    font-size: 12px;
+    text-decoration: underline;
+    cursor: pointer;
+}
+.builder-root .link-btn:hover { text-decoration: none; }
+
+/* Shared modal shell — centered, contained, scrollable. Used by the logs and
+   name-rules dialogs. Replaces the inline dumps that pushed the panel
+   off-screen. */
+.builder-root .builder-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.builder-root .builder-modal {
+    width: min(520px, 100%);
+    max-height: calc(100dvh - 96px);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    overflow-y: auto;
+}
+.builder-root .builder-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.builder-root .builder-modal-title {
+    font-family: var(--font-serif, "DM Serif Display", serif);
+    font-size: 18px;
+    letter-spacing: -0.02em;
+}
+.builder-root .builder-modal-close {
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    background: transparent;
+    color: var(--chrome-text2);
+    cursor: pointer;
+    padding: 4px;
+}
+.builder-root .builder-modal-close:hover { color: var(--chrome-text); }
+.builder-root .logs-modal-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    margin: 0;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    padding: 12px;
+    color: var(--chrome-text2);
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Markdown / HTML source editor + exact-artifact preview frame ───────── */
+
+.builder-root .code-pane {
+    min-height: 100dvh;
+    /* Bottom padding tracks the visual viewport (keyboard) like the floating
+       bars do, so the caret can't hide behind the keyboard or the pills. */
+    padding: calc(16px + env(safe-area-inset-top)) 16px
+        calc(180px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    display: flex;
+}
+.builder-root .code-card {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 840px;
+    margin: 0 auto;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+.builder-root .code-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
+    padding: 0 14px 0 8px; /* tight left — the back control leads the bar */
+    background: rgba(0,0,0,0.25);
+    border-bottom: 1px solid var(--chrome-border);
+    color: var(--chrome-text2);
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 11px;
+}
+/* The header's own back control (md/html edit views host Back here — the
+   centered card means a viewport-fixed circle can't align with it). */
+.builder-root .header-back {
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: transparent;
+    border: 0;
+    color: var(--chrome-text2);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.builder-root .header-back:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--chrome-text);
+}
+.builder-root .code-editor-host {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+.builder-root .code-editor-host .cm-editor { flex: 1; min-height: 0; }
+.builder-root .code-editor-host .cm-editor.cm-focused { outline: none; }
+.builder-root .code-editor-host .cm-editor .cm-scroller {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+.builder-root .site-frame {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    /* Mirror a real browser tab's default canvas: an iframe is transparent
+       where the document paints no background, but deployed the same page
+       sits on white. Only shows through when the user's CSS sets no bg. */
+    background: #fff;
+}
+
+/* Preview fallback on no-iframe hosts. */
+.builder-root .frame-unavailable {
+    margin: auto;
+    max-width: 420px;
+    padding: 80px 24px;
+    text-align: center;
+    color: var(--chrome-text2);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* ── Mobile tweaks ──────────────────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+    .builder-root .site { padding: 64px 16px 160px; }
+    .builder-root .float-bottom { bottom: calc(72px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px)); }
+    .builder-root .action-bar { padding: 5px 12px; gap: 6px; }
+    /* ≥16px or iOS Safari zooms the viewport on focus and never zooms back. */
+    .builder-root .code-editor-host .cm-editor .cm-scroller { font-size: 16px; }
+    .builder-root .deploy-panel {
+        width: calc(100% - 16px);
+        bottom: calc(80px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    }
+}
+
+/* ── /builder landing page ────────────────────────────────────────────────────
+   Rendered INSIDE the playground shell (no .builder-root wrapper) — these
+   rules style shell content and deliberately use the playground's tokens
+   (--color-*, --r-card) directly, mirroring .feat-card. They live here so
+   the whole /builder feature ships in one lazy chunk. */
+
+.builder-section { margin-bottom: 28px; }
+
+.builder-section-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--color-text-tertiary);
+    margin: 0 0 10px;
+}
+
+/* "Your sites" — deployed-site links as a wrapping chip cloud, the same
+   read as the homepage footer's category cloud but on builder tokens. */
+.builder-sites-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 14px;
+    row-gap: 8px;
+    align-items: center;
+    font-size: 20px;
+}
+.builder-site-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 16px;
+    border-radius: 999px;
+    color: var(--chrome-text2);
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    text-decoration: none;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.builder-site-chip:hover {
+    background: var(--ok);
+    color: var(--accent-contrast);
+}
+
+/* Two wide columns rather than auto-filling 3–4 narrow ones: bigger card
+   thumbnails and roomier text across the overview (drafts / templates /
+   write-it-yourself). Collapses to a single column on phones. */
+.builder-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+/* Mobile: the write-it-yourself code preview is a hint, not a full cover.
+   Shrink it so the HTML/Markdown cards aren't disproportionately tall in the
+   single-column layout (the 16:9 frame gets very tall at full width). */
+@media (max-width: 600px) {
+    .builder-grid {
+        grid-template-columns: 1fr;
+    }
+    .builder-thumb-code {
+        aspect-ratio: auto;
+        height: 96px;
+    }
+}
+
+.builder-card {
+    position: relative; /* anchors the stretched button overlay */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--r-card);
+    padding: 18px;
+    color: var(--color-text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.builder-card:hover { background: var(--color-surface-raised); }
+
+/* At the draft cap, start cards are inert: no hover, dimmed, blocked cursor
+   (the .builder-note line under the grids says why). */
+.builder-card.is-disabled { opacity: 0.5; }
+.builder-card.is-disabled:hover { background: var(--color-surface); }
+.builder-card.is-disabled .builder-card-button { cursor: not-allowed; }
+
+/* Cards carrying a thumbnail: tighter padding so the frame dominates. */
+.builder-card-thumbed {
+    padding: 12px;
+    gap: 10px;
+}
+
+.builder-card-resume { border-color: var(--color-border-strong); }
+
+/* Draft delete: sits above the stretched click overlay. */
+.builder-card-delete {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid var(--color-border-strong);
+    border-radius: 50%;
+    color: var(--color-text-primary);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.builder-card-delete:hover {
+    background: rgba(255, 60, 60, 0.2);
+    border-color: rgba(255, 60, 60, 0.5);
+    color: var(--color-text-primary);
+}
+
+/* Live draft thumbnail: the deploy artifact rendered at half scale in a
+   script-less sandboxed iframe. Pointer events off — the card's stretched
+   button owns the click. */
+.builder-thumb {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+}
+.builder-thumb iframe {
+    /* Oversized by 1px per edge (scaled): the radius clip must cut through
+       DOCUMENT pixels, not the iframe's edge — otherwise the white canvas
+       below fringes out around dark pages at the anti-aliased corners and
+       the fractional-height bottom row. */
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    width: calc(200% + 4px);
+    height: calc(200% + 4px);
+    transform: scale(0.5);
+    transform-origin: 0 0;
+    border: 0;
+    pointer-events: none;
+    /* Same white-canvas default as .site-frame — thumbnails should show a
+       background-less page the way a browser tab would. */
+    background: #fff;
+}
+
+/* No-iframe hosts (Polkadot Mobile) can't render a live preview, so the
+   thumbnail slot is replaced by a left accent spine: a full-height theme
+   marker on the card's edge, tinted inline with the site accent. Inset a touch
+   so it reads as a deliberate spine and clears the card's rounded corners. */
+.builder-card-spine {
+    position: absolute;
+    top: 12px;
+    bottom: 12px;
+    left: 10px;
+    width: 4px;
+    border-radius: 999px;
+}
+/* Make room so the card text never sits under the spine. */
+.builder-card-spined {
+    padding-left: 22px;
+}
+
+/* Source-flavored thumb for the write-it-yourself cards: same frame as the
+   live thumbs, but code lines in the app's code voice. Decorative only. */
+
+.builder-thumb-code {
+    display: flex;
+    flex-direction: column;
+    /* Top-aligned: when the lines outgrow the 16:9 frame at narrow column
+       widths, the clip eats the tail, never the heading. */
+    justify-content: flex-start;
+    padding: 14px 16px;
+    font-family: var(--font-code, ui-monospace, Menlo, monospace);
+    font-size: 11px;
+    line-height: 1.8;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+}
+/* Pink mirrors the starter documents' own accent (the literal #e6007a in
+   the HTML starter's CSS); the hover shift is the app's interaction teal. */
+.builder-code-k { color: #e6007a; }
+.builder-card:hover .builder-code-k { color: #5de8b5; }
+
+.builder-card-button {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+/* Stretch the button's hit area over the whole card. */
+.builder-card-button::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+}
+
+.builder-card-name { font-size: 16px; font-weight: 500; }
+
+.builder-card-desc {
+    font-size: 14px;
+    line-height: 1.35;
+    color: var(--color-text-secondary);
+}
+
+.builder-note {
+    font-size: 13px;
+    color: var(--color-text-tertiary);
+    margin: 10px 0 0; /* sits under the drafts grid, above the layouts */
+}
+
+/* NOTE: this block must stay at the END of the file — it overrides the
+ * base chrome rules above at equal specificity, and the cascade resolves
+ * equal specificity by source order. */
+/* Hybrid layout, desktop half: the rail and ticker stay, and the editor is
+ * a ROUNDED CANVAS inset inside the shell (12px gaps) rather than a hard
+ * split at the rail edge. The root becomes its own fixed, scrolling
+ * container; the viewport-fixed pills float above it unaffected — a fixed
+ * (untransformed) ancestor does not re-anchor fixed children. The canvas
+ * midpoint equals calc(50% + 110px), so centered chrome keeps its offset. */
+@media (min-width: 821px) {
+    .builder-root {
+        /* The shell is CENTERED at max-width --max-w-shell, so the rail sits
+           at the shell's left edge, not the viewport's. Inset the canvas by
+           the centering gutter on BOTH sides — that also keeps the canvas
+           midpoint at calc(50% + 110px) at every viewport width, so the
+           centered chrome below needs no width-dependent offset. */
+        --shell-gutter: max(0px, (100vw - var(--max-w-shell, 1240px)) / 2);
+        --canvas-left: calc(var(--shell-gutter) + 232px); /* rail 220 + 12 gap */
+        --canvas-right: calc(var(--shell-gutter) + 12px);
+        position: fixed;
+        inset: 44px var(--canvas-right) 12px var(--canvas-left); /* top: ticker 32 + 12 gap */
+        min-height: 0;
+        overflow-y: auto;
+        border: 1px solid var(--chrome-border);
+        border-radius: 16px;
+        background: var(--color-surface, #151515);
+    }
+    /* In-flow views fill the canvas, not the viewport. */
+    .builder-root .site { min-height: 100%; }
+    .builder-root .code-pane { min-height: 100%; }
+    /* Fixed overlays adopt the canvas box and its rounding. The iframe is a
+       REPLACED element: width/height auto means intrinsic 300×150, not
+       stretch-between-insets — so size it explicitly from the canvas vars. */
+    .builder-root .site-frame {
+        inset: 44px var(--canvas-right) 12px var(--canvas-left);
+        width: calc(100vw - var(--canvas-left) - var(--canvas-right));
+        height: calc(100dvh - 56px); /* top 44 + bottom 12 */
+        border: 1px solid var(--chrome-border);
+        border-radius: 16px;
+    }
+    .builder-root .sheet-backdrop {
+        inset: 44px var(--canvas-right) 12px var(--canvas-left);
+        border-radius: 16px;
+        overflow: hidden;
+    }
+    /* Chrome floats inside the canvas' edges instead of the viewport's. */
+    .builder-root .back-float {
+        top: 60px; /* canvas top (44) + card top (12) + 4px header inset */
+        left: calc(var(--canvas-left) + 22px);
+    }
+    .builder-root .bottom-nav {
+        left: var(--canvas-left);
+        right: var(--canvas-right);
+        bottom: 24px;
+    }
+    .builder-root .float-bottom { left: calc(50% + 110px); bottom: 88px; }
+    .builder-root .deploy-panel { left: calc(50% + 110px); bottom: 88px; }
+}
+
+/* ── Host-safe dialogs & toasts ─────────────────────────────────────────────
+   The mobile hosts silently no-op window.confirm/alert/open (unwired JS
+   dialogs — polkadot-app-android-v2#776), so every confirmation and popup
+   below is plain DOM. */
+
+/* In-place delete undo: the deleted card's grid slot becomes the undo
+   affordance (a corner snackbar was too small and off-gaze to notice). The
+   slot reflows away when the grace period ends. */
+.builder-card-undo {
+    border-style: dashed;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-align: center;
+    cursor: default;
+    min-height: 120px;
+}
+.builder-card-undo-title {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    word-break: break-word;
+}
+.builder-card-undo button {
+    border: 1px solid rgba(52, 211, 153, 0.4);
+    background: transparent;
+    border-radius: 999px;
+    padding: 6px 20px;
+    color: #5de8b5;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.builder-card-undo button:hover { background: rgba(52, 211, 153, 0.08); }
+
+/* Transient editor notice (e.g. fork blocked at the draft cap). */
+.builder-root .builder-editor-toast {
+    position: fixed;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(140px + env(safe-area-inset-bottom) + var(--vv-bottom, 0px) + var(--vv-bottom-fallback, 0px));
+    z-index: 40;
+    max-width: min(420px, calc(100% - 32px));
+    padding: 10px 16px;
+    background: var(--chrome-surface);
+    border: 1px solid var(--chrome-border);
+    border-radius: 8px;
+    color: var(--chrome-text);
+    font-size: 13px;
+    text-align: center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+@media (min-width: 821px) {
+    .builder-root .builder-editor-toast { left: calc(50% + 110px); }
+}
+
+/* ── Opt-in "List in Apps" (success card) ───────────────────────────────
+   Replaces the old auto-listing line. Filled teal pill in the panel's
+   success family + a quiet note that doubles as the in-flight / error
+   status. */
+.builder-root .result-success-list {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+}
+.builder-root .result-success-listbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 38px;
+    padding: 0 20px;
+    border: none;
+    border-radius: 999px;
+    background: var(--ok);
+    color: var(--accent-contrast);
+    font: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.builder-root .result-success-listbtn:hover:not(:disabled) {
+    background: #5de8b5;
+    box-shadow: 0 0 20px rgba(52, 211, 153, 0.25);
+}
+.builder-root .result-success-listbtn:disabled {
+    opacity: 0.65;
+    cursor: default;
+}
+.builder-root .result-success-listnote {
+    margin: 0;
+    max-width: 280px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--chrome-text2);
+}
+

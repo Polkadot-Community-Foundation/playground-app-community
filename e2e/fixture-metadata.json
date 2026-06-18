@@ -1,0 +1,7 @@
+{
+  "name": "Playground E2E Fixture",
+  "description": "A pinned test app used by the playground-app E2E suite. Do not interact manually — automated tests rely on its metadata being stable.",
+  "repository": "https://github.com/paritytech/playground-app",
+  "tag": "utility",
+  "readme": "# Playground E2E Fixture\n\nThis app exists solely as a fixture for the playground-app end-to-end test suite. It is published once by `e2e/setup.ts` and re-used across all test runs to provide a deterministic target for browse/detail/rate tests.\n\n**Do not interact with this app manually** — its metadata is asserted on by automated tests.\n\nOwner: the playground-app E2E funder account (set via the `E2E_FUNDER_SEED` GitHub Actions secret).\n"
+}

@@ -1,0 +1,225 @@
+name: E2E Tests
+
+# Auto-triggers were paused 2026-05-07 (PR #150) during a coordinated
+# product-sdk + host-api + Paseo Asset Hub upgrade cascade. Reactivated
+# in PR #167 once the upgrade work landed (PR #156, #160, #161) and the
+# suite was re-scoped to the non-admin user experience (PR #163 made
+# the publish modal admin-only) with a new mobile-signer login + signing
+# spec covering the RFC-0009 flow the previous suite never exercised.
+# See e2e/README.md.
+on:
+    workflow_dispatch:
+        inputs:
+            runner:
+                description: "Runner label"
+                type: choice
+                options:
+                    - parity-default
+                    - ubuntu-latest
+                default: parity-default
+    # NOTE: the per-PR `pull_request:` trigger was removed (2026-06-15) so E2E
+    # no longer gates / red-flags every PR. The suite is non-blocking by design
+    # (the app's chain/Bulletin paths are intentionally host-container-only and
+    # the suite has drifted from the current card/detail UI — see the tracking
+    # issue) and is exercised manually (`workflow_dispatch`) + nightly instead.
+    # Daily at 06:00 UTC — catches Paseo regressions and signer balance drift.
+    schedule:
+        - cron: "0 6 * * *"
+
+permissions:
+    contents: read
+    issues: write
+
+# Default per-job env. Workflow-level concurrency intentionally removed — it
+# previously serialized everything on `e2e-funder`, which forced read tests
+# (which don't touch the funder) to wait behind any other PR's write tests.
+# Concurrency is now applied at the job level: only `e2e-writes` serializes,
+# `e2e-reads` runs immediately.
+
+jobs:
+    # Read-only Playwright projects (chromium-reads + mobile-chrome). No
+    # signing, no funder spend. Multiple workers (`--workers=3`), no concurrency
+    # group — multiple PRs can run reads in parallel. Target wall-clock ~3-5 min.
+    e2e-reads:
+        name: E2E Reads (parallel)
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        timeout-minutes: 15
+        env:
+            GITHUB_REPO: ${{ github.repository }}
+            SIGNER_LOW_THRESHOLD_DOT: "10"
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: pnpm/action-setup@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: pnpm
+
+            - run: pnpm install --frozen-lockfile
+
+            - name: Cache Playwright browsers
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/ms-playwright
+                  key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+                  restore-keys: |
+                      playwright-${{ runner.os }}-
+
+            - name: Install Playwright browsers
+              run: pnpm exec playwright install --with-deps chromium
+
+            - name: Run E2E read tests
+              run: pnpm exec playwright test --project chromium-reads --project mobile-chrome --workers=3
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  E2E_FUNDER_SEED: ${{ secrets.E2E_FUNDER_SEED }}
+
+            - name: Upload Playwright report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: playwright-report-reads
+                  path: playwright-report/
+                  retention-days: 14
+
+    # Chain-write Playwright project (chromium-writes). Single funder account
+    # = strict nonce ordering, so workers=1 and the job is wrapped in the
+    # `e2e-funder` concurrency group so only one PR's writes run at a time.
+    # cancel-in-progress: false because a half-killed publish leaves orphan
+    # domains in the registry and a half-applied tx burns funder balance.
+    # Target wall-clock ~5-8 min.
+    e2e-writes:
+        name: E2E Writes (sequential, funder-gated)
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        timeout-minutes: 30
+        concurrency:
+            group: e2e-funder
+            cancel-in-progress: false
+        env:
+            GITHUB_REPO: ${{ github.repository }}
+            SIGNER_LOW_THRESHOLD_DOT: "10"
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: pnpm/action-setup@v4
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: pnpm
+
+            - run: pnpm install --frozen-lockfile
+
+            - name: Cache Playwright browsers
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/ms-playwright
+                  key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+                  restore-keys: |
+                      playwright-${{ runner.os }}-
+
+            - name: Install Playwright browsers
+              run: pnpm exec playwright install --with-deps chromium
+
+            - name: Run E2E write tests
+              run: pnpm exec playwright test --project chromium-writes --project chromium-mobile-signer --workers=1
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  E2E_FUNDER_SEED: ${{ secrets.E2E_FUNDER_SEED }}
+
+            - name: Upload Playwright report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: playwright-report-writes
+                  path: playwright-report/
+                  retention-days: 14
+
+    # Auto-file a GitHub issue when the suite fails on main-branch or the
+    # nightly schedule. PR failures don't trigger this — they're visible on
+    # the PR itself and shouldn't open repo-level issues. Stage 3.5 from
+    # the TESTING_PLAN.md workflow stages; per #122: 'enable only after
+    # the suite is stable to avoid first-day false-positive flood.' Enabled
+    # in PR #167 after the suite went green on Paseo Asset Hub Next.
+    auto-file-failure:
+        name: Auto-file failure issue
+        runs-on: ${{ inputs.runner || 'parity-default' }}
+        needs: [e2e-reads, e2e-writes]
+        if: |
+            failure() &&
+            (github.event_name == 'schedule' ||
+             (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        permissions:
+            issues: write
+        steps:
+            - name: Open or comment on the auto-filed issue
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  REPO: ${{ github.repository }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  TRIGGER: ${{ github.event_name == 'schedule' && 'nightly' || 'main' }}
+                  COMMIT_SHA: ${{ github.sha }}
+                  READS_OUTCOME: ${{ needs.e2e-reads.result }}
+                  WRITES_OUTCOME: ${{ needs.e2e-writes.result }}
+              run: |
+                  set -euo pipefail
+                  TITLE="🚨 E2E auto-filed — ongoing failures on ${TRIGGER}"
+
+                  # Dedupe: if any open auto-filed issue exists, comment on
+                  # the most recent one instead of opening a new one. Keeps
+                  # the issue tracker from filling up with one per nightly
+                  # run when a regression sticks around for days.
+                  EXISTING_NUM=$(
+                    gh issue list \
+                      --repo "$REPO" \
+                      --label auto-filed \
+                      --state open \
+                      --limit 1 \
+                      --json number \
+                      --jq '.[0].number // empty'
+                  )
+
+                  COMMENT_BODY=$(cat <<EOF
+                  Another **${TRIGGER}** failure: ${RUN_URL}
+
+                  - commit: \`${COMMIT_SHA}\`
+                  - e2e-reads: ${READS_OUTCOME}
+                  - e2e-writes: ${WRITES_OUTCOME}
+                  EOF
+                  )
+
+                  if [ -n "$EXISTING_NUM" ]; then
+                    echo "Found existing auto-filed issue #$EXISTING_NUM — adding comment"
+                    gh issue comment "$EXISTING_NUM" --repo "$REPO" --body "$COMMENT_BODY"
+                  else
+                    echo "No existing auto-filed issue — opening new one"
+                    NEW_BODY=$(cat <<EOF
+                  E2E suite failed on the **${TRIGGER}** trigger.
+
+                  ## Latest failure
+                  - Run: ${RUN_URL}
+                  - Commit: \`${COMMIT_SHA}\`
+                  - e2e-reads: \`${READS_OUTCOME}\`
+                  - e2e-writes: \`${WRITES_OUTCOME}\`
+
+                  ## How this issue works
+                  This issue was opened automatically by the E2E workflow's failure step. Subsequent failures on the same trigger will comment on this issue rather than open new ones — close it once the underlying regression is resolved and the next failure will open a fresh one.
+
+                  ## Next steps
+                  1. Open the run link above
+                  2. Find the failed spec(s) in the chromium-reads / chromium-writes job logs
+                  3. Reproduce locally with \`pnpm test:e2e\` (set \`E2E_FUNDER_SEED\` first)
+                  4. Fix or \`test.fixme\` as appropriate with a per-test rationale
+                  5. Close this issue when resolved
+
+                  See [\`e2e/TESTING_PLAN.md\`](e2e/TESTING_PLAN.md) for the full plan + the most up-to-date list of known follow-ups.
+                  EOF
+                  )
+                    gh issue create \
+                      --repo "$REPO" \
+                      --title "$TITLE" \
+                      --body "$NEW_BODY" \
+                      --label "bug,auto-filed"
+                  fi
