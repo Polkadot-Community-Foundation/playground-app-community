@@ -282,13 +282,13 @@ jobs:
                   SNAPSHOT="migration/snapshot-${{ github.run_id }}.json"
 
                   echo "::group::Export from $OLD_ADDR"
-                  pnpm tsx scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
+                  bun scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
                   echo "::endgroup::"
 
                   APP_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').apps.length))")
                   PIN_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').pinned.length))")
                   echo "::group::Import ${APP_COUNT} apps + ${PIN_COUNT} pinned into $NEW_ADDR"
-                  pnpm tsx scripts/import-registry-state.ts "$SNAPSHOT"
+                  bun scripts/import-registry-state.ts "$SNAPSHOT"
                   echo "::endgroup::"
 
                   echo "::notice::Migrated ${APP_COUNT} apps + ${PIN_COUNT} pinned from $OLD_ADDR to $NEW_ADDR"
