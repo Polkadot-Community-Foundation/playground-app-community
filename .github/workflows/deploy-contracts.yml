@@ -201,10 +201,12 @@ jobs:
                   corepack enable
                   git clone --depth 1 https://github.com/Polkadot-Community-Foundation/contract-dependency-manager "$RUNNER_TEMP/cdm-fork"
                   ( cd "$RUNNER_TEMP/cdm-fork" && corepack pnpm install --frozen-lockfile )
+                  # The CLI imports the workspace libs by their built dist (main:
+                  # ./dist/index.js), so build them before bundling the CLI.
+                  ( cd "$RUNNER_TEMP/cdm-fork" && corepack pnpm --filter @parity/cdm-utils --filter @parity/cdm-env --filter @parity/cdm-builder build )
                   mkdir -p "$HOME/.cdm/bin"
-                  # Compile a self-contained binary (bundles the @parity/cdm-env
-                  # workspace dep in) so there's no runtime module resolution and
-                  # no bun-version sensitivity.
+                  # Compile a self-contained binary (bundles the workspace deps in)
+                  # so there's no runtime module resolution / bun-version sensitivity.
                   ( cd "$RUNNER_TEMP/cdm-fork/src/apps/cli" && bun build --compile src/cli.ts --outfile "$HOME/.cdm/bin/cdm" )
                   echo "$HOME/.cdm/bin" >> "$GITHUB_PATH"
                   "$HOME/.cdm/bin/cdm" --version
