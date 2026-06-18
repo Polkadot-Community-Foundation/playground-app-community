@@ -39,6 +39,11 @@ on:
                 required: false
                 default: false
                 type: boolean
+            skip_deploy:
+                description: "Skip cdm deploy (registry already deployed); run cdm i + migrate only"
+                required: false
+                default: false
+                type: boolean
             runner:
                 description: "Runner label"
                 type: choice
@@ -131,6 +136,7 @@ jobs:
             # `pvm_contract`-based contract. Reinstall the matching CLI; the rev
             # is derived from Cargo.lock by the script (single source of truth).
             - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
+              if: ${{ inputs.skip_deploy != true }}
               run: bash scripts/install-pvm-contract-cli.sh
 
             # Summit: cdm's registry reads (version-count etc.) use a read origin
@@ -216,6 +222,7 @@ jobs:
             # Reinstall the matching cargo-pvm-contract (rev derived from Cargo.lock)
             # for this repo's pvm_contract-based contract.
             - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
+              if: ${{ inputs.skip_deploy != true }}
               run: bash scripts/install-pvm-contract-cli.sh
 
             - name: Install contract dependencies
@@ -223,7 +230,11 @@ jobs:
 
             # cdm deploy: build -> deploy to Asset Hub -> publish metadata to Bulletin -> register
             # Retries handle transient RPC/network failures
+            # skip_deploy=true: the new registry is already deployed+registered;
+            # skip the (non-idempotent) cdm deploy and only run cdm i + migrate
+            # against the existing latest registry version.
             - name: Deploy contracts
+              if: ${{ inputs.skip_deploy != true }}
               uses: nick-fields/retry@v3
               with:
                   timeout_minutes: 15
@@ -249,8 +260,10 @@ jobs:
                   OLD_ADDR=0x14C27954796575C26c85eD9BC6441522e174a0f3
                   NEW_ADDR=$(node -e "
                     const cdm = require('./cdm.json');
-                    const t = Object.values(cdm.contracts)[0];
-                    process.stdout.write(t['@w3s/playground-registry'].address);
+                    // fork cdm.json is flat: contracts['@w3s/playground-registry'].address
+                    const e = (cdm.contracts || {})['@w3s/playground-registry'];
+                    if (!e || !e.address) process.exit(0);
+                    process.stdout.write(e.address);
                   ")
 
                   echo "Prior registry : ${OLD_ADDR:-<none>}"
