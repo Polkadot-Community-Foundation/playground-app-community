@@ -19,6 +19,7 @@
  *
  * Usage: tsx scripts/add-admin.ts <SS58_ADDRESS>
  * Env:   MNEMONIC — sr25519 mnemonic for the sudo account
+ *        CHAIN    — target network (paseo | summit); default paseo
  *
  * Example (resolving the sudo mnemonic from the local cdm config):
  *   MNEMONIC="$(node -e "process.stdout.write(require(require('os').homedir()+'/.cdm/accounts.json').paseo.mnemonic)")" \
@@ -33,10 +34,9 @@ import {
 } from "@parity/product-sdk-contracts";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { ss58ToH160 } from "@parity/product-sdk-address";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import cdmJson from "../cdm.json" with { type: "json" };
 import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.ts";
-import { assetHubWsUrl } from "./_lib.ts";
+import { assetHubDescriptor, assetHubWsUrl, resolveChain } from "./_lib.ts";
 
 const REGISTRY_CONTRACT = PLAYGROUND_REGISTRY_CONTRACT;
 
@@ -62,6 +62,7 @@ if (!mnemonic) {
 
 const { signer, ss58Address: origin } = seedToAccount(mnemonic, "");
 const h160 = ss58ToH160(ss58Address);
+const chain = resolveChain();
 
 // ---------------------------------------------------------------------------
 // Execute
@@ -69,12 +70,12 @@ const h160 = ss58ToH160(ss58Address);
 
 // Node script: wire the chain client directly. chain-client@0.4.x is
 // host-only (Polkadot Browser/Desktop) and has no WS fallback for Node.
-const client = createClient(getWsProvider(assetHubWsUrl()));
+const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
 const manager = await ContractManager.fromLiveClient(
   cdmJson as unknown as CdmJson,
   client,
-  paseo_asset_hub,
+  assetHubDescriptor(chain),
   {
     defaultSigner: signer,
     defaultOrigin: origin,
@@ -86,6 +87,7 @@ const manager = await ContractManager.fromLiveClient(
 try {
   const registry = manager.getContract(REGISTRY_CONTRACT);
   const contractAddress = manager.getAddress(REGISTRY_CONTRACT);
+  console.log(`Chain: ${chain}`);
   console.log(`Contract: ${REGISTRY_CONTRACT} (${contractAddress})`);
   console.log(`Caller: ${origin} (${ss58ToH160(origin)})`);
   console.log(`Target: ${ss58Address} (${h160})`);

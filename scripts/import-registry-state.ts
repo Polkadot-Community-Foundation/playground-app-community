@@ -37,11 +37,10 @@ import {
   type CdmJson,
 } from "@parity/product-sdk-contracts";
 import { seedToAccount } from "@parity/product-sdk-keys";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { readFileSync } from "node:fs";
 import cdmJson from "../cdm.json" with { type: "json" };
 import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.ts";
-import { assetHubWsUrl, DEV_ACCOUNTS } from "./_lib.ts";
+import { assetHubDescriptor, assetHubWsUrl, DEV_ACCOUNTS, resolveChain } from "./_lib.ts";
 
 // ---------------------------------------------------------------------------
 // Snapshot types — accept both format_version 1 and 2.
@@ -163,17 +162,19 @@ console.log(`  leaderboard: ${leaderboard.length}`);
 console.log(`  social     : ${social.length}`);
 console.log(`  usernames  : ${usernames.length}`);
 console.log(`  lineage    : ${lineage.length}`);
+const chain = resolveChain();
 console.log(`Package      : ${packageName}`);
+console.log(`Chain        : ${chain}`);
 console.log(`Caller       : ${origin}  (${callerH160})`);
 console.log(`Mode         : ${dryRun ? "DRY-RUN (no transactions)" : "LIVE"}`);
 console.log();
 
-const client = createClient(getWsProvider(assetHubWsUrl()));
+const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
 const manager = await ContractManager.fromLiveClient(
   cdmJson as unknown as CdmJson,
   client,
-  paseo_asset_hub,
+  assetHubDescriptor(chain),
   {
     defaultSigner: signer,
     defaultOrigin: origin,

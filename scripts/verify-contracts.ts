@@ -23,9 +23,8 @@
 
 import { createClient, type HexString } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import cdmJson from "../cdm.json" with { type: "json" };
-import { assetHubWsUrl } from "./_lib.ts";
+import { assetHubDescriptor, assetHubWsUrl, resolveChain } from "./_lib.ts";
 
 const cdm = cdmJson as unknown as {
   registry?: HexString;
@@ -39,8 +38,9 @@ if (cdm.registry) targets.push({ label: "CDM meta-registry", address: cdm.regist
 
 const labelWidth = Math.max(...targets.map((t) => t.label.length));
 
-const client = createClient(getWsProvider(assetHubWsUrl()));
-const api = client.getTypedApi(paseo_asset_hub);
+const chain = resolveChain();
+const client = createClient(getWsProvider(assetHubWsUrl(chain)));
+const api = client.getTypedApi(assetHubDescriptor(chain));
 
 try {
   const infos = await Promise.all(

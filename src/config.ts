@@ -29,12 +29,13 @@ export type Environment = (typeof ENVIRONMENTS)[number];
 /** Single source of truth for which network the whole app targets — Asset Hub,
  *  Bulletin, and the People chain move together. Set at BUILD time via
  *  VITE_ENVIRONMENT (Vite inlines it). Unset (local dev, tsx scripts, current
- *  CI) → "paseo", unchanged from before. An explicitly-set unknown value is a
- *  build-config mistake and throws loudly here rather than silently shipping
- *  the wrong chain — caught at build / preview / smoke-test, never in prod. */
+ *  CI) → "summit" — this is a Summit-only fork, so the default never targets
+ *  Paseo. An explicitly-set unknown value is a build-config mistake and throws
+ *  loudly here rather than silently shipping the wrong chain — caught at build /
+ *  preview / smoke-test, never in prod. */
 function resolveEnvironment(): Environment {
   const raw = env.VITE_ENVIRONMENT?.trim().toLowerCase();
-  if (!raw) return "paseo";
+  if (!raw) return "summit";
   if ((ENVIRONMENTS as readonly string[]).includes(raw)) return raw as Environment;
   throw new Error(
     `VITE_ENVIRONMENT="${env.VITE_ENVIRONMENT}" is not a supported network. ` +

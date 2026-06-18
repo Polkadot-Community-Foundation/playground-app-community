@@ -26,6 +26,7 @@
  *
  * Usage: tsx scripts/blacklist-accounts.ts [ADDRESS ...]
  * Env:   MNEMONIC — sr25519 mnemonic for the sudo/admin account
+ *        CHAIN    — target network (paseo | summit); default paseo
  *
  * Example (resolving the sudo mnemonic from the local cdm config):
  *   MNEMONIC="$(node -e "process.stdout.write(require(require('os').homedir()+'/.cdm/accounts.json').paseo.mnemonic)")" \
@@ -40,10 +41,9 @@ import {
 } from "@parity/product-sdk-contracts";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { ss58ToH160 } from "@parity/product-sdk-address";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import cdmJson from "../cdm.json" with { type: "json" };
 import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.ts";
-import { assetHubWsUrl, DEV_ACCOUNTS } from "./_lib.ts";
+import { assetHubDescriptor, assetHubWsUrl, DEV_ACCOUNTS, resolveChain } from "./_lib.ts";
 
 const REGISTRY_CONTRACT = PLAYGROUND_REGISTRY_CONTRACT;
 
@@ -69,6 +69,7 @@ const targets = [...new Set([...DEV_ACCOUNTS, ...extra].map((a) => a.toLowerCase
 // ---------------------------------------------------------------------------
 
 const { signer, ss58Address: origin } = seedToAccount(mnemonic, "");
+const chain = resolveChain();
 
 // ---------------------------------------------------------------------------
 // Execute
@@ -76,12 +77,12 @@ const { signer, ss58Address: origin } = seedToAccount(mnemonic, "");
 
 // Node script: wire the chain client directly. chain-client@0.4.x is
 // host-only (Polkadot Browser/Desktop) and has no WS fallback for Node.
-const client = createClient(getWsProvider(assetHubWsUrl()));
+const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
 const manager = await ContractManager.fromLiveClient(
   cdmJson as unknown as CdmJson,
   client,
-  paseo_asset_hub,
+  assetHubDescriptor(chain),
   {
     defaultSigner: signer,
     defaultOrigin: origin,
@@ -93,6 +94,7 @@ const manager = await ContractManager.fromLiveClient(
 try {
   const registry = manager.getContract(REGISTRY_CONTRACT);
   const contractAddress = manager.getAddress(REGISTRY_CONTRACT);
+  console.log(`Chain: ${chain}`);
   console.log(`Contract: ${REGISTRY_CONTRACT} (${contractAddress})`);
   console.log(`Caller: ${origin} (${ss58ToH160(origin)})`);
   console.log(`Blacklisting ${targets.length} account(s):`);
@@ -102,10 +104,12 @@ try {
   if (!result.ok) throw new Error("setBlacklisted transaction failed");
   console.log(`Tx: ${result.txHash}`);
 
-  for (const t of targets) {
-    const res = await registry.isBlacklisted.query(t);
-    console.log(`isBlacklisted ${t}: ${res.success ? res.value : "query failed"}`);
-  }
+  // Verify in parallel — the reads are independent, so a serial loop would
+  // just stack chain round-trips.
+  const verifications = await Promise.all(targets.map((t) => registry.isBlacklisted.query(t)));
+  verifications.forEach((res, i) => {
+    console.log(`isBlacklisted ${targets[i]}: ${res.success ? res.value : "query failed"}`);
+  });
 } finally {
   client.destroy();
   process.exit(0);
