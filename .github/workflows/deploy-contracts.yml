@@ -313,22 +313,6 @@ jobs:
                   # defaults to Paseo; point it at Summit Asset Hub.
                   ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
 
-            # v1 dropped importUsernames for an account->root_pubkey identity
-            # binding (the display name now lives on the People chain). The v0
-            # snapshot has only the name, so migrate-identities.ts recovers each
-            # root by reverse-resolving the name against Summit People and
-            # submits adminSetIdentity (idempotent; skips already-bound and names
-            # with no/ambiguous Summit People identity). Gated on the committed
-            # seed snapshot, which is Summit-only — so this no-ops on paseo.
-            - name: Migrate identities (v0 usernames -> v1 root_pubkey bindings)
-              if: hashFiles('migration/seed-snapshot.json') != ''
-              env:
-                  MNEMONIC: ${{ secrets.MNEMONIC }}
-                  PEOPLE_WS_URL: wss://summit-people-rpc.polkadot.io
-                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
-                  RUN: "1"
-              run: bun scripts/migrate-identities.ts migration/seed-snapshot.json
-
             # Keep the snapshot as a workflow artifact so a failed import can
             # be replayed manually without re-exporting from the prior chain.
             - name: Upload migration snapshot

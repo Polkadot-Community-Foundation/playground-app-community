@@ -1,24 +1,38 @@
-# Grant (or check) an admin on the live Summit playground registry.
+# Registry admin ops on the live Summit playground registry, signed by the
+# 5Fk8 admin/sudo. Two operations, selected by `op`:
 #
-# Runs the same proven Summit path as the deploy-contracts migrate step:
-#   Node 22 + bun + pnpm deps, then `bun scripts/add-admin.ts <SS58>` with
-#   MNEMONIC = the 5Fk8 sudo signer and ASSET_HUB_WS_URL pointed at Summit AH.
+#   grant-admin        — add_admin(<ss58>)  via scripts/add-admin.ts
+#   migrate-identities — v0 usernames -> v1 account->root_pubkey bindings via
+#                        scripts/migrate-identities.ts (adminSetIdentity)
 #
-# add-admin.ts resolves the @w3s/playground-registry address LIVE via
-# ContractManager.fromLiveClient (→ latest version = the new v1 registry), so
-# this always targets whatever registry the committed cdm.json points at. The
-# 5Fk8 origin is mapped on Summit, so the live reads (getSudo/isAdmin) succeed
-# (the descriptor is paseo_asset_hub — Summit AH shares the same pallet-revive
-# metadata; only the WS endpoint differs, hence the ASSET_HUB_WS_URL override).
-name: Grant Admin
+# Both are plain PAPI scripts (no cdm toolchain): pnpm deps + bun + the 5Fk8
+# MNEMONIC, with ASSET_HUB_WS_URL pointed at Summit AH. They resolve the
+# @w3s/playground-registry address LIVE via ContractManager.fromLiveClient
+# (-> latest version = the new v1 registry), so they always target whatever
+# registry the committed cdm.json points at.
+#
+# (Filename kept as grant-admin.yml so it stays dispatchable from a branch via
+# --ref while the rebaseline branch is not yet merged to main.)
+name: Registry Admin Ops
 
 on:
     workflow_dispatch:
         inputs:
+            op:
+                description: "Operation to run"
+                type: choice
+                options:
+                    - grant-admin
+                    - migrate-identities
+                default: grant-admin
             ss58:
-                description: "SS58 address to grant admin on the playground registry"
-                required: true
+                description: "grant-admin: SS58 address to grant admin (ignored by migrate-identities)"
+                required: false
                 type: string
+            identities_dry_run:
+                description: "migrate-identities: dry-run only (report, submit nothing)"
+                type: boolean
+                default: true
 
 concurrency:
     # 5Fk8 signs serially on-chain — never overlap with a deploy/migrate.
@@ -29,9 +43,9 @@ permissions:
     contents: read
 
 jobs:
-    grant-admin:
+    admin-op:
         runs-on: ubuntu-latest
-        timeout-minutes: 15
+        timeout-minutes: 20
         steps:
             - name: Checkout repository
               uses: actions/checkout@v4
@@ -47,15 +61,27 @@ jobs:
             - name: Install dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Setup Bun (add-admin.ts runs TS directly)
+            - name: Setup Bun (scripts run TS directly)
               uses: oven-sh/setup-bun@v2
               with:
                   bun-version: "1.2.9"
 
-            - name: Add admin
+            - name: Grant admin
+              if: ${{ inputs.op == 'grant-admin' }}
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
-                  # add-admin.ts reads assetHubWsUrl() which defaults to Paseo;
-                  # point it at Summit Asset Hub.
                   ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
-              run: bun scripts/add-admin.ts "${{ inputs.ss58 }}"
+              run: |
+                  if [ -z "${{ inputs.ss58 }}" ]; then
+                    echo "::error::op=grant-admin requires the ss58 input"; exit 1
+                  fi
+                  bun scripts/add-admin.ts "${{ inputs.ss58 }}"
+
+            - name: Migrate identities
+              if: ${{ inputs.op == 'migrate-identities' }}
+              env:
+                  MNEMONIC: ${{ secrets.MNEMONIC }}
+                  PEOPLE_WS_URL: wss://summit-people-rpc.polkadot.io
+                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
+                  RUN: ${{ inputs.identities_dry_run == false && '1' || '0' }}
+              run: bun scripts/migrate-identities.ts migration/seed-snapshot.json
