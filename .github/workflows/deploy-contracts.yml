@@ -193,6 +193,12 @@ jobs:
 
             - name: Setup Bun (PCF cdm CLI runs TS directly)
               uses: oven-sh/setup-bun@v2
+              with:
+                  # Pin 1.2.9: bun 1.3.x mishandles Summit's missing
+                  # ReviveApi_trace_call (the InkSdk read fallback), failing the
+                  # registry export with "Can't find message undefined". 1.2.9
+                  # tolerates it (verified locally).
+                  bun-version: "1.2.9"
 
             # Use the PCF FORK's cdm, NOT upstream's release binary. Upstream cdm
             # reads registry views with the unmapped //Alice origin, which reverts
