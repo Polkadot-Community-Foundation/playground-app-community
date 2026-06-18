@@ -287,9 +287,18 @@ jobs:
                   mkdir -p migration
                   SNAPSHOT="migration/snapshot-${{ github.run_id }}.json"
 
-                  echo "::group::Export from $OLD_ADDR"
-                  bun scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
-                  echo "::endgroup::"
+                  # Prefer a committed seed snapshot (captured out-of-band) — the
+                  # live export of the OLD v0 registry breaks once cdm.json carries
+                  # the NEW v1 ABI (it queries v0 with the wrong ABI). Fall back to
+                  # a live export only if no seed snapshot is committed.
+                  if [ -f migration/seed-snapshot.json ]; then
+                    echo "Using committed seed snapshot (skipping live export)"
+                    SNAPSHOT=migration/seed-snapshot.json
+                  else
+                    echo "::group::Export from $OLD_ADDR"
+                    bun scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
+                    echo "::endgroup::"
+                  fi
 
                   APP_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').apps.length))")
                   PIN_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').pinned.length))")
