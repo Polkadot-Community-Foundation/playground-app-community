@@ -71,6 +71,14 @@ jobs:
 
             - name: Install and build
               env:
+                  # Network the build targets. Sourced from the repo-level
+                  # `ENVIRONMENT` variable (Settings → Variables) so the operative
+                  # network is controlled at the repo, with a `summit` fallback so
+                  # a missing/unset variable can never silently build Paseo — this
+                  # is a Summit-only fork. (src/config.ts also defaults to summit,
+                  # making this belt-and-suspenders.)
+                  VITE_ENVIRONMENT: ${{ vars.ENVIRONMENT || 'summit' }}
+                  VITE_SENTRY_DSN: ""
                   VITE_VERSION: ${{ steps.version.outputs.version }}
                   VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}
                   VITE_SENTRY_ENV: ${{ steps.version.outputs.sentry_env }}

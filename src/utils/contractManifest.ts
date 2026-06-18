@@ -29,7 +29,4 @@ export const PLAYGROUND_REGISTRY_CONTRACT: "@w3s/playground-registry" | "@stagin
   REGISTRY_PACKAGE_OVERRIDE === "@staging/playground-registry"
     ? "@staging/playground-registry"
     : "@w3s/playground-registry";
-export const REPUTATION_CONTRACT = "@mock/reputation";
-export const CONTEXTS_CONTRACT = "@polkadot/contexts";
-
-export const LIVE_CONTRACTS = [PLAYGROUND_REGISTRY_CONTRACT, REPUTATION_CONTRACT] as const;
+export const LIVE_CONTRACTS = [PLAYGROUND_REGISTRY_CONTRACT] as const;

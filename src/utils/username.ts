@@ -15,65 +15,16 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 /**
- * Username helpers: client-side validation that mirrors the contract's
- * `validate_username`, plus React hooks for reading the per-account username
- * and batch-reading usernames for the leaderboard. Display fallbacks live in
- * `displayNameForAccount` so the same precedence (registry username →
- * deterministic generated name) is used everywhere.
+ * Username display helpers: the deterministic anonymous-name generator, the
+ * profile-identifier resolver, and the profile-route / hue / short-address
+ * utilities. Display fallbacks live in `displayNameForAccount` so the same
+ * precedence (verified username → deterministic generated name) is used
+ * everywhere. Username reading + claiming has moved to the verified-identity
+ * flow (`utils/identity.ts`): `useRootUsername` / `useRootUsernamesBatch` for
+ * reads, `revealIdentity` for the write (becoming a builder).
  */
 
-import { useEffect, useState } from "react";
-import { registryReady } from "./contracts.ts";
-import { stringify } from "./stringify.ts";
-
-export const USERNAME_MIN_LEN = 3;
-export const USERNAME_MAX_LEN = 30;
 export const ZERO_H160 = `0x${"0".repeat(40)}` as const;
-
-/**
- * Client-side validator mirroring the contract's `validate_username`. Returns
- * an error code matching the on-chain revert tag so the same message can be
- * surfaced regardless of where the rejection came from. Input is lowercased
- * before checking, which matches what the contract does internally.
- */
-export type UsernameValidationError =
-  | "UsernameTooShort"
-  | "UsernameTooLong"
-  | "UsernameInvalidChar"
-  | "UsernameInvalidEdge"
-  | "UsernameDoubleDash";
-
-export function validateUsernameClient(raw: string): UsernameValidationError | null {
-  const name = raw.toLowerCase();
-  if (name.length < USERNAME_MIN_LEN) return "UsernameTooShort";
-  if (name.length > USERNAME_MAX_LEN) return "UsernameTooLong";
-  if (name.startsWith("-") || name.endsWith("-")) return "UsernameInvalidEdge";
-  let prevDash = false;
-  for (let i = 0; i < name.length; i++) {
-    const ch = name.charCodeAt(i);
-    const ok =
-      (ch >= 97 && ch <= 122) /* a-z */ ||
-      (ch >= 48 && ch <= 57) /* 0-9 */ ||
-      ch === 45; /* '-' */
-    if (!ok) return "UsernameInvalidChar";
-    const isDash = ch === 45;
-    if (isDash && prevDash) return "UsernameDoubleDash";
-    prevDash = isDash;
-  }
-  return null;
-}
-
-const VALIDATION_COPY: Record<UsernameValidationError, string> = {
-  UsernameTooShort: `Use at least ${USERNAME_MIN_LEN} characters.`,
-  UsernameTooLong: `Keep it under ${USERNAME_MAX_LEN + 1} characters.`,
-  UsernameInvalidChar: "Only lowercase letters, digits, and hyphens.",
-  UsernameInvalidEdge: "Cannot start or end with a hyphen.",
-  UsernameDoubleDash: "No two hyphens in a row.",
-};
-
-export function describeValidationError(err: UsernameValidationError): string {
-  return VALIDATION_COPY[err];
-}
 
 /**
  * Truncate an H160 to "0xabcd…1234" for compact display. Mirrors
@@ -269,20 +220,72 @@ function pickDeterministic<const T extends readonly string[]>(
   return words[hashString(`${seed}:${salt}`) % words.length];
 }
 
+/**
+ * A short, stable, per-account discriminator: the last 4 hex of the address.
+ * There are only ANONYMOUS_DESCRIPTORS × ANIMALS (~3.8k) animal-name pairs, so
+ * by the birthday bound two accounts start sharing a pair at ~70 users — and
+ * since "Stay anon" *claims* the animal handle on-chain (one global owner per
+ * name), a bare pair would make most users unable to claim their own anonymous
+ * name. Appending the address tail lifts the space to ~3.8k × 65,536 ≈ 248M,
+ * so the handle is effectively always free to claim. Derived from the same
+ * lowercased seed as the word picks, so it's deterministic and case-insensitive
+ * (non-hex chars are stripped first, guarding against a non-H160 seed).
+ */
+function accountDiscriminator(seed: string): string {
+  return seed.replace(/[^0-9a-f]/g, "").slice(-4).padStart(4, "0");
+}
+
+/**
+ * The anonymous identity for an account, as a ready-to-claim registry handle:
+ * "<descriptor>-<animal>-<hex>" (e.g. "silent-stoat-1324"). This is shown
+ * verbatim everywhere — profile, leaderboard, cards, the Set-username dialog —
+ * and is exactly what "Stay anon" writes on-chain, so the displayed name never
+ * changes shape when claimed. The `-hex` tail keeps it unique (see
+ * `accountDiscriminator`); descriptor/animal are lowercase words, so the
+ * hyphen-join is already a valid handle.
+ */
 export function deterministicNameForAccount(account: string | null | undefined): string {
   const seed = account?.trim().toLowerCase();
   if (!seed) return "";
   return [
     pickDeterministic(ANONYMOUS_DESCRIPTORS, seed, "anonymous"),
     pickDeterministic(ANIMALS, seed, "animal"),
-  ].join(" ");
+    accountDiscriminator(seed),
+  ].join("-");
 }
 
-export function profilePathForAccount(
-  account: string,
-  registryUsername: string | null | undefined,
+// The palette's blue is reserved for the connected user's own profile; every
+// other account hashes into the remaining hues so a builder keeps the same
+// color on every visit and blue always means "me".
+const PROFILE_HUE_SELF = "var(--cat-social)";
+const PROFILE_HUES_OTHERS = [
+  "var(--cat-site)",
+  "var(--cat-utility)",
+  "var(--cat-gaming)",
+  "var(--cat-marketplace)",
+  "var(--cat-chat)",
+  "var(--cat-irl)",
+] as const;
+
+export function profileHueForAccount(
+  account: string | null | undefined,
+  isSelf: boolean,
 ): string {
-  return `/profile/${encodeURIComponent(registryUsername || account)}`;
+  if (isSelf) return PROFILE_HUE_SELF;
+  const seed = account?.trim().toLowerCase();
+  if (!seed) return PROFILE_HUE_SELF;
+  return pickDeterministic(PROFILE_HUES_OTHERS, seed, "hue");
+}
+
+/**
+ * Public-profile route for an account. Always the H160 — `resolveProfileIdentifier`
+ * is H160-only since usernames moved to the People chain (no contract-side
+ * reverse index), so a username segment would dead-end on "Profile not found".
+ * The displayed name (verified username / generated handle) is chosen separately
+ * at the link's render site; only the URL is pinned to the address.
+ */
+export function profilePathForAccount(account: string): string {
+  return `/profile/${encodeURIComponent(account)}`;
 }
 
 export type ProfileIdentifierResolution = {
@@ -293,8 +296,13 @@ export type ProfileIdentifierResolution = {
 
 /**
  * Resolve a public profile route segment into the owner H160 used by the
- * owner-app queries. Raw H160s pass through directly; usernames use the
- * registry's reverse index.
+ * owner-app queries. Profile URLs are H160-only: a valid H160 passes through
+ * directly; any non-H160 segment returns `null` (PublicProfilePage renders its
+ * "Profile not found" state). The old username reverse-index lookup was dropped
+ * with the move to the verified-identity model — usernames now live on the
+ * People chain and have no contract-side reverse index. The async signature is
+ * kept so callers don't need to change. `lookup` stays a union for the same
+ * reason, though only `"address"` is ever returned now.
  */
 export async function resolveProfileIdentifier(
   raw: string,
@@ -310,35 +318,17 @@ export async function resolveProfileIdentifier(
     };
   }
 
-  const name = input.toLowerCase();
-  try {
-    const registry = await registryReady;
-    const res = await registry.getUsernameOwner.query(name);
-    if (!res.success) {
-      console.warn(
-        `[playground] registry.getUsernameOwner(${name}) returned success:false — ${stringify(res)}`,
-      );
-      return null;
-    }
-    const address = String(res.value ?? "").toLowerCase();
-    if (!isH160Address(address) || address === ZERO_H160) return null;
-    return {
-      address: address as `0x${string}`,
-      lookup: "username",
-      normalizedInput: name,
-    };
-  } catch (cause) {
-    console.warn(
-      `[playground] registry.getUsernameOwner(${name}) threw — ${stringify(cause)}`,
-    );
-    return null;
-  }
+  return null;
 }
 
 /**
  * Display-name precedence:
  *   1. registry username (the user's chosen handle)
- *   2. deterministic generated name from the account address
+ *   2. "…" while the username is still unknown (`undefined` — the chain
+ *      read hasn't succeeded yet). The generated name must never paint
+ *      over a real handle just because a query is slow or failed (#324).
+ *   3. deterministic generated name — only once the chain CONFIRMED no
+ *      name is set (`null`).
  * Stays in one place so leaderboard, MyApps header, and badge UIs all agree.
  */
 export function displayNameForAccount(
@@ -347,120 +337,6 @@ export function displayNameForAccount(
 ): string {
   const username = registryUsername?.trim();
   if (username) return username;
+  if (registryUsername === undefined) return "…";
   return deterministicNameForAccount(h160);
-}
-
-/**
- * Watch a single account's registry username with best-block freshness.
- * `null` means no name set yet (treat as anonymous); `undefined` means we
- * haven't loaded once yet. `refreshKey` reruns the read.
- */
-export function useRegistryUsername(
-  account: `0x${string}` | undefined | null,
-  refreshKey: number = 0,
-): { username: string | null | undefined; loading: boolean; refresh: () => void } {
-  const [username, setUsername] = useState<string | null | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
-  const [localKey, setLocalKey] = useState(0);
-
-  useEffect(() => {
-    if (!account) {
-      setUsername(null);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    (async () => {
-      try {
-        const registry = await registryReady;
-        const res = await registry.getUsername.query(account);
-        if (cancelled) return;
-        if (res.success) {
-          const value = res.value ?? "";
-          setUsername(value === "" ? null : value);
-        } else {
-          console.warn(
-            `[playground] registry.getUsername(${account}) returned success:false — ${stringify(res)}`,
-          );
-          setUsername(null);
-        }
-      } catch (cause) {
-        if (cancelled) return;
-        console.warn(
-          `[playground] registry.getUsername(${account}) threw — ${stringify(cause)}`,
-        );
-        setUsername(null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [account, refreshKey, localKey]);
-
-  return {
-    username,
-    loading,
-    refresh: () => setLocalKey((k) => k + 1),
-  };
-}
-
-/**
- * Batch-read usernames for a list of addresses (leaderboard, future
- * collaborator lists). One contract call per address-set change. Empty
- * strings come back as `null` to make falsy checks easy. `refreshKey`
- * forces a re-read independent of address changes.
- */
-export function useRegistryUsernamesBatch(
-  addresses: ReadonlyArray<`0x${string}`>,
-  refreshKey: number = 0,
-): Map<string, string | null> {
-  const [map, setMap] = useState<Map<string, string | null>>(new Map());
-
-  // Stable key for the deps array — comparing the array by reference would
-  // re-fire on every render when callers build the list inline. Lowercased
-  // so the cache hits regardless of caller casing.
-  const key = addresses.map((a) => a.toLowerCase()).join(",");
-
-  useEffect(() => {
-    if (addresses.length === 0) {
-      setMap(new Map());
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const registry = await registryReady;
-        const res = await registry.getUsernames.query(addresses as `0x${string}`[]);
-        if (cancelled) return;
-        if (!res.success) {
-          console.warn(
-            `[playground] registry.getUsernames(${addresses.length}) returned success:false — ${stringify(res)}`,
-          );
-          return;
-        }
-        const next = new Map<string, string | null>();
-        const values: string[] = res.value as unknown as string[];
-        for (let i = 0; i < addresses.length; i++) {
-          const addr = addresses[i].toLowerCase();
-          const v = values[i] ?? "";
-          next.set(addr, v === "" ? null : v);
-        }
-        setMap(next);
-      } catch (cause) {
-        if (cancelled) return;
-        console.warn(
-          `[playground] registry.getUsernames(${addresses.length}) threw — ${stringify(cause)}`,
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- key is the
-    // canonical form of `addresses` (see comment above).
-  }, [key, refreshKey]);
-
-  return map;
 }

@@ -19,9 +19,9 @@ on:
                 description: "Runner label"
                 type: choice
                 options:
-                    - ubuntu-latest
                     - parity-default
-                default: ubuntu-latest
+                    - ubuntu-latest
+                default: parity-default
 
 permissions:
     contents: write   # for creating GitHub Release
@@ -45,7 +45,7 @@ jobs:
     # context. Other jobs read it directly from $RELEASE_DOMAIN inside their
     # shell commands.
     domain:
-        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner || 'parity-default' }}
         name: Resolve domain
         outputs:
             domain: ${{ env.RELEASE_DOMAIN }}
@@ -53,7 +53,7 @@ jobs:
             - run: echo "release domain = $RELEASE_DOMAIN"
 
     build:
-        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner || 'parity-default' }}
         name: Build
         steps:
             # workflow_dispatch inputs don't support pattern constraints
@@ -99,6 +99,7 @@ jobs:
                   VITE_VERSION: ${{ steps.version.outputs.version }}
                   VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}
                   VITE_SENTRY_ENV: production
+                  VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
               run: pnpm build:frontend
 
             - name: Upload build artifact
@@ -115,22 +116,13 @@ jobs:
         with:
             dotns-domain: ${{ needs.domain.outputs.domain }}
             artifact-name: frontend-build
-            env: summit
-            # publish lists playground.dot in the browse directory. Summit wires
-            # a Publisher as of polkadot-app-deploy >=0.11.1, so this is honored.
             publish: true
         secrets:
             mnemonic: ${{ secrets.MNEMONIC }}
 
     publish-metadata:
         needs: deploy
-        # DISABLED (matches deploy-frontend.yml): publish-metadata.ts is a manual
-        # step. It uses the paseo_bulletin descriptor + bulletin-sdk built against
-        # Paseo metadata and is blocked in CI on product-sdk#102. Run it by hand
-        # on the VM per PLAYGROUND_SUMMIT_VM_RUNBOOK §8. Re-enable once the SDK
-        # exposes a Node-callable Summit Bulletin path.
-        if: false
-        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner || 'parity-default' }}
         name: Publish Metadata
         steps:
             - name: Checkout repository
@@ -159,14 +151,11 @@ jobs:
                   command: pnpm tsx scripts/publish-metadata.ts "$RELEASE_DOMAIN"
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
-                  # Summit endpoints (the release path deploys to Summit).
-                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
-                  BULLETIN_WS_URL: wss://summit-bulletin-rpc.polkadot.io
                   NODE_OPTIONS: "--max-old-space-size=8192"
 
     github-release:
         needs: deploy
-        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner || 'parity-default' }}
         name: GitHub Release
         steps:
             - name: Create GitHub Release

@@ -1,0 +1,176 @@
+{
+  "format_version": 2,
+  "exported_at": "2026-06-17T23:51:23.438Z",
+  "source": {
+    "network": "wss://summit-asset-hub-rpc.polkadot.io",
+    "package": "@w3s/playground-registry",
+    "address": "0x14C27954796575C26c85eD9BC6441522e174a0f3",
+    "version": 0
+  },
+  "context_id": "0x504a3e4ea91bf009c9e8b8349ef8bacac9da95718282ed3c5140c74dd6849958",
+  "app_count_onchain": 6,
+  "apps": [
+    {
+      "source_index": 0,
+      "domain": "playground.dot",
+      "metadata_uri": "bafk2bzacecgishmbotmf7w3jvvclrn5647tq24r6w274pl4lanbp4nvqbzeyq",
+      "owner": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "publisher": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "visibility": 1,
+      "is_moddable": false,
+      "modded_from": ""
+    },
+    {
+      "source_index": 1,
+      "domain": "playground-tutorial.dot",
+      "metadata_uri": "bafk2bzacebwm55mzj6aupavmpqxrsowbbn3yjffvnvts2epliw4f4r2wby6be",
+      "owner": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "publisher": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "visibility": 1,
+      "is_moddable": false,
+      "modded_from": ""
+    },
+    {
+      "source_index": 2,
+      "domain": "playground-template.dot",
+      "metadata_uri": "bafk2bzacebjfn2kgmljvj7nerjtu7e4vdn363r6jfhb5kuw2b6t4yxsczvfns",
+      "owner": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "publisher": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "visibility": 1,
+      "is_moddable": false,
+      "modded_from": ""
+    },
+    {
+      "source_index": 3,
+      "domain": "rock-paper-scissors.dot",
+      "metadata_uri": "bafk2bzacebhr7u7avlevjpzydeknu2xepal6gt2nrzhlec6bb3tvhr2ivghqq",
+      "owner": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "publisher": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "visibility": 1,
+      "is_moddable": false,
+      "modded_from": ""
+    },
+    {
+      "source_index": 4,
+      "domain": "survey.dot",
+      "metadata_uri": "bafk2bzacedvgob55d6rm4tw57ghulonrtirbdqztiusczjtmrgchnmy37zcj6",
+      "owner": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "publisher": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "visibility": 1,
+      "is_moddable": false,
+      "modded_from": ""
+    },
+    {
+      "source_index": 5,
+      "domain": "feedback.dot",
+      "metadata_uri": "bafk2bzaceatayhdi2hx6fazemhgocq7vxmwv2jbln74f436mcr7nvvcecns6s",
+      "owner": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "publisher": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "visibility": 1,
+      "is_moddable": false,
+      "modded_from": ""
+    }
+  ],
+  "pinned": [],
+  "leaderboard": [
+    {
+      "account": "0x2DC0CBD77e809d91626Ffd2c6Db2E02D6d6920CB",
+      "score": "25"
+    },
+    {
+      "account": "0x2827049576c9b124ab1b42148a45dc2f5445257A",
+      "score": "25"
+    },
+    {
+      "account": "0x26cdcDA5c3A0303eF8bA2d66dc7B6166E61ed6B4",
+      "score": "25"
+    },
+    {
+      "account": "0x3e43838fEE4DDEA30099a1EaF3991351bC0719D4",
+      "score": "25"
+    },
+    {
+      "account": "0x55d5Fed49994e886B81518185a11aAE96D987f79",
+      "score": "25"
+    },
+    {
+      "account": "0xe18EaB513A9509f06B507c45bBD12f4773352da8",
+      "score": "25"
+    },
+    {
+      "account": "0x7E32940ED9D3B70D6942EBe85E696c38f50E673F",
+      "score": "25"
+    },
+    {
+      "account": "0x964201CD44CE8eB1719A45F49B80fcA226510292",
+      "score": "25"
+    },
+    {
+      "account": "0x9c5603A3A3F1f8408Ec2b7e6d9962c7458488048",
+      "score": "25"
+    },
+    {
+      "account": "0xF8d186c352e2ea0B9C02c211525A20DdcB8CD2dD",
+      "score": "20"
+    }
+  ],
+  "social": [
+    {
+      "domain": "survey.dot",
+      "star_count": 1,
+      "mod_count": 0
+    },
+    {
+      "domain": "feedback.dot",
+      "star_count": 1,
+      "mod_count": 0
+    }
+  ],
+  "usernames": [
+    {
+      "account": "0x2DC0CBD77e809d91626Ffd2c6Db2E02D6d6920CB",
+      "name": "ivan-developer-01"
+    },
+    {
+      "account": "0x2827049576c9b124ab1b42148a45dc2f5445257A",
+      "name": "stepan"
+    },
+    {
+      "account": "0x26cdcDA5c3A0303eF8bA2d66dc7B6166E61ed6B4",
+      "name": "deadeyedshark"
+    },
+    {
+      "account": "0x3e43838fEE4DDEA30099a1EaF3991351bC0719D4",
+      "name": "dimdjm"
+    },
+    {
+      "account": "0x55d5Fed49994e886B81518185a11aAE96D987f79",
+      "name": "lrubasze"
+    },
+    {
+      "account": "0xe18EaB513A9509f06B507c45bBD12f4773352da8",
+      "name": "mokita"
+    },
+    {
+      "account": "0x7E32940ED9D3B70D6942EBe85E696c38f50E673F",
+      "name": "anonymous"
+    },
+    {
+      "account": "0x964201CD44CE8eB1719A45F49B80fcA226510292",
+      "name": "rosarp"
+    },
+    {
+      "account": "0x9c5603A3A3F1f8408Ec2b7e6d9962c7458488048",
+      "name": "russel"
+    }
+  ],
+  "lineage": [],
+  "notes": {
+    "skipped_slots": 0,
+    "private_apps": 0,
+    "public_apps": 6,
+    "moddable_defaulted_false": 6,
+    "lineage_onchain": 0,
+    "lineage_from_metadata": 0
+  }
+}

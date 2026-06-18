@@ -28,6 +28,9 @@ import {
 } from "@polkadot-labs/hdkd-helpers";
 import { secretFromSeed, getPublicKey, HDKD } from "@scure/sr25519";
 import { str, u64 } from "scale-ts";
+import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
+import { summit_asset_hub } from "@parity/product-sdk-descriptors/summit-asset-hub";
+import { ENVIRONMENTS, type Environment } from "../src/config.ts";
 
 const JUNCTION_ID_LEN = 32;
 
@@ -110,12 +113,45 @@ export const DEV_ACCOUNTS: `0x${string}`[] = [
   "0x41dccbd49b26c50d34355ed86ff0fa9e489d1e01", // //Bob
 ];
 
+// Asset-Hub websocket endpoints per chain — kept in sync with
+// `src/builder/networks.json` (the `assetHubRpc` field of each network).
+// Hard-coded rather than read from networks.json because the scripts need a
+// raw WS url (the SDK chain-client is host-only and has no Node fallback),
+// while networks.json's rpc fields are documented as vestigial for the app.
+const ASSET_HUB_WS: Record<Environment, string> = {
+  paseo: "wss://paseo-asset-hub-next-rpc.polkadot.io",
+  summit: "wss://summit-asset-hub-rpc.polkadot.io",
+};
+
 /**
- * Asset-Hub websocket URL for diagnostic scripts. Pinned to the Paseo Next v2
- * endpoint that matches the `-n paseo` chain preset used by `cdm` and by the
- * product-sdk descriptor (`paseo_asset_hub`). Override via
- * `ASSET_HUB_WS_URL` for one-off runs against a custom endpoint.
+ * Resolve the target chain for a script run from the `CHAIN` env var, defaulting
+ * to `"summit"` — this is a Summit-only fork, so the default never targets Paseo.
+ * An explicitly-set unknown value throws rather than silently targeting the
+ * wrong network. Reuses the frontend's `ENVIRONMENTS` so the selectable-network
+ * set has a single source of truth (only chains with a full product-sdk
+ * descriptor set qualify — CDM-only `w3s`/`local` do not).
  */
-export function assetHubWsUrl(): string {
-  return process.env.ASSET_HUB_WS_URL ?? "wss://paseo-asset-hub-next-rpc.polkadot.io";
+export function resolveChain(): Environment {
+  const raw = process.env.CHAIN?.trim().toLowerCase();
+  if (!raw) return "summit";
+  if ((ENVIRONMENTS as readonly string[]).includes(raw)) return raw as Environment;
+  throw new Error(
+    `CHAIN="${raw}" is not a supported network. Use one of: ${ENVIRONMENTS.join(", ")}.`,
+  );
+}
+
+/** PAPI Asset-Hub descriptor for the given chain, matching the frontend's
+ *  ENVIRONMENT-keyed selection in `src/utils/contracts.ts`. */
+export function assetHubDescriptor(chain: Environment) {
+  return chain === "summit" ? summit_asset_hub : paseo_asset_hub;
+}
+
+/**
+ * Asset-Hub websocket URL for diagnostic scripts, keyed on the target chain
+ * (default `"paseo"`). Matches the `-n <chain>` preset used by `cdm` and the
+ * product-sdk descriptor. Override via `ASSET_HUB_WS_URL` for one-off runs
+ * against a custom endpoint (applies regardless of chain).
+ */
+export function assetHubWsUrl(chain: Environment = "paseo"): string {
+  return process.env.ASSET_HUB_WS_URL ?? ASSET_HUB_WS[chain];
 }

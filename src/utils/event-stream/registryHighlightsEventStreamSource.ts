@@ -16,7 +16,9 @@
 
 import { getBulletinClient } from "../bulletin";
 import { registryReady } from "../contracts";
+import { withReadDeadline } from "../deadline.ts";
 import { displayNameForAccount } from "../username";
+import { resolveRootUsernames } from "../identity";
 import type {
   EventStreamEntity,
   EventStreamInput,
@@ -67,23 +69,6 @@ function routeEntity(path: string, label: string): EventStreamEntity[] {
   return [{ type: "route", id: path, label }];
 }
 
-async function readUsernames(accounts: readonly `0x${string}`[]): Promise<Map<string, string | null>> {
-  if (accounts.length === 0) return new Map();
-
-  const unique = [...new Set(accounts.map((account) => account.toLowerCase() as `0x${string}`))];
-  const registry = await registryReady;
-  const res = await registry.getUsernames.query(unique);
-  if (!res.success) return new Map();
-
-  const values = res.value as string[];
-  return new Map(
-    unique.map((account, index) => {
-      const value = values[index] ?? "";
-      return [account.toLowerCase(), value === "" ? null : value];
-    }),
-  );
-}
-
 function displayName(account: `0x${string}`, usernames: ReadonlyMap<string, string | null>): string {
   return displayNameForAccount(usernames.get(account.toLowerCase()), account);
 }
@@ -91,7 +76,10 @@ function displayName(account: `0x${string}`, usernames: ReadonlyMap<string, stri
 async function readAppName(row: AppRow): Promise<string> {
   try {
     const client = await getBulletinClient();
-    const metadata = await client.fetchJson<AppMetadata>(row.metadata_uri);
+    const metadata = await withReadDeadline(
+      client.fetchJson<AppMetadata>(row.metadata_uri),
+      "Bulletin metadata fetch",
+    );
     return metadata.name?.trim() || row.domain;
   } catch {
     return row.domain;
@@ -100,11 +88,14 @@ async function readAppName(row: AppRow): Promise<string> {
 
 async function readRegistryHighlights(): Promise<EventStreamInput[]> {
   const registry = await registryReady;
-  const [topRes, appsRes, appCountRes] = await Promise.all([
-    registry.getTopBuilders.query(0, 1),
-    registry.getApps.query(0, RECENT_APP_WINDOW),
-    registry.getAppCount.query(),
-  ]);
+  const [topRes, appsRes, appCountRes] = await withReadDeadline(
+    Promise.all([
+      registry.getTopBuilders.query(0, 1),
+      registry.getApps.query(0, RECENT_APP_WINDOW),
+      registry.getAppCount.query(),
+    ]),
+    "Registry highlights",
+  );
 
   const topBuilder = topRes.success ? (topRes.value as TopBuilderRow[])[0] : undefined;
   const appRows = appsRes.success ? ((appsRes.value as AppsPage).entries ?? []) : [];
@@ -112,7 +103,7 @@ async function readRegistryHighlights(): Promise<EventStreamInput[]> {
     accountOrNull(topBuilder?.account),
     ...appRows.map((row) => accountOrNull(row.owner) ?? accountOrNull(row.publisher)),
   ].filter((account): account is `0x${string}` => !!account);
-  const usernames = await readUsernames(accounts);
+  const usernames = await resolveRootUsernames(accounts);
   const items: EventStreamInput[] = [];
 
   if (topBuilder) {

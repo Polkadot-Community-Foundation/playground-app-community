@@ -15,7 +15,12 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from "vitest";
-import { decodeCompactU32, decodeFirstDomainAfterAddress } from "./scaleDecode";
+import {
+  decodeCompactU32,
+  decodeFaucetFailedEventPayload,
+  decodeFirstDomainAfterAddress,
+  decodeU128Le,
+} from "./scaleDecode";
 
 // Helpers ---------------------------------------------------------------------
 
@@ -152,5 +157,62 @@ describe("decodeFirstDomainAfterAddress", () => {
     // decoder doesn't slice on character boundaries.
     const payload = concat(ADDR20, encodeString("café.dot"));
     expect(decodeFirstDomainAfterAddress(payload)).toBe("café.dot");
+  });
+});
+
+describe("decodeU128Le", () => {
+  /** Encode a bigint as 16 little-endian bytes. */
+  function u128(value: bigint): Uint8Array {
+    const out = new Uint8Array(16);
+    let v = value;
+    for (let i = 0; i < 16; i++) {
+      out[i] = Number(v & 0xffn);
+      v >>= 8n;
+    }
+    return out;
+  }
+
+  it("decodes zero", () => {
+    expect(decodeU128Le(u128(0n), 0)).toEqual({ value: 0n, size: 16 });
+  });
+
+  it("decodes a multi-byte value little-endian", () => {
+    expect(decodeU128Le(u128(100_000_000_000n), 0)).toEqual({ value: 100_000_000_000n, size: 16 });
+  });
+
+  it("decodes the u128 max", () => {
+    const max = (1n << 128n) - 1n;
+    expect(decodeU128Le(u128(max), 0)).toEqual({ value: max, size: 16 });
+  });
+
+  it("respects offset", () => {
+    const buf = concat(new Uint8Array([0xff, 0xff]), u128(42n));
+    expect(decodeU128Le(buf, 2)).toEqual({ value: 42n, size: 16 });
+  });
+
+  it("throws when truncated", () => {
+    expect(() => decodeU128Le(new Uint8Array(8), 0)).toThrow(/u128/);
+  });
+});
+
+describe("decodeFaucetFailedEventPayload", () => {
+  /** FaucetEvent: recipient Address(20) + amount u128 (16 bytes LE). */
+  function u128(value: bigint): Uint8Array {
+    const out = new Uint8Array(16);
+    let v = value;
+    for (let i = 0; i < 16; i++) {
+      out[i] = Number(v & 0xffn);
+      v >>= 8n;
+    }
+    return out;
+  }
+
+  it("decodes recipient + amount", () => {
+    const recipient = new Uint8Array(20).fill(0xab);
+    const payload = concat(recipient, u128(100_000_000_000n));
+    expect(decodeFaucetFailedEventPayload(payload)).toEqual({
+      recipient: ("0x" + "ab".repeat(20)) as `0x${string}`,
+      amount: 100_000_000_000n,
+    });
   });
 });

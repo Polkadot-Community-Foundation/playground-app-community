@@ -15,52 +15,48 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from "vitest";
-import { placeholderFor } from "./placeholders";
+import { cardColorForDomain } from "./placeholders";
 
-describe("placeholderFor", () => {
-  it("returns the same placeholder for the same domain (deterministic)", () => {
+describe("cardColorForDomain", () => {
+  it("returns the same colour for the same domain (deterministic)", () => {
     // Determinism is load-bearing: the grid renders one card per registry
-    // entry, and each render re-derives the placeholder. A non-deterministic
-    // result would cause the icon to flicker between renders.
-    const first = placeholderFor("example.dot");
-    const second = placeholderFor("example.dot");
+    // entry, and each render re-derives the fill colour. A non-deterministic
+    // result would cause icon-less cards to flicker between renders.
+    const first = cardColorForDomain("example.dot");
+    const second = cardColorForDomain("example.dot");
     expect(second).toBe(first);
   });
 
-  it("returns a path under assets/placeholders/", () => {
-    // Sanity: the function maps into the bundled JPGs, not an arbitrary
-    // string. Catches the regression where the glob pattern stops matching
-    // (e.g. file extension changes, directory moves).
-    const result = placeholderFor("example.dot");
-    expect(result).toMatch(/placeholders\//);
+  it("returns a value from the --cat-* palette", () => {
+    // Sanity: the function maps into the CSS custom-property palette, not an
+    // arbitrary string. Catches a regression where the palette array changes
+    // shape or the var() wrapper is dropped.
+    const result = cardColorForDomain("example.dot");
+    expect(result).toMatch(/^var\(--cat-[a-z]+\)$/);
   });
 
-  it("distributes domains across multiple placeholders", () => {
-    // The hash → index mapping must spread across the available set;
-    // otherwise every card on the grid would share the same image. Sampling
-    // 20 distinct domains and counting distinct outputs is a probabilistic
-    // test — with ~20 placeholders and a reasonable hash, collisions are
-    // rare. Threshold of >3 is conservative: even a terrible distribution
-    // (e.g. always mod=0) would fail this.
+  it("distributes domains across multiple colours", () => {
+    // The hash → index mapping must spread across the palette; otherwise every
+    // icon-less card would share the same colour. Sampling 20 distinct domains
+    // and counting distinct outputs is probabilistic — with 7 colours and a
+    // reasonable hash, collisions down to <4 distinct would signal a bad hash.
     const domains = Array.from({ length: 20 }, (_, i) => `app-${i}.dot`);
-    const results = new Set(domains.map(placeholderFor));
+    const results = new Set(domains.map(cardColorForDomain));
     expect(results.size).toBeGreaterThan(3);
   });
 
   it("handles the empty-domain edge case without throwing", () => {
-    // Defensive: the App.tsx fallback already short-circuits empty domains
-    // upstream, but the util shouldn't trap on its own. The hash loop runs
-    // 0 times, so the modulo is `Math.abs(0) % N = 0` — first placeholder.
-    expect(() => placeholderFor("")).not.toThrow();
-    expect(placeholderFor("")).toMatch(/placeholders\//);
+    // Defensive: the util shouldn't trap on its own. The hash loop runs 0
+    // times, so the modulo is `Math.abs(0) % N = 0` — first colour.
+    expect(() => cardColorForDomain("")).not.toThrow();
+    expect(cardColorForDomain("")).toMatch(/^var\(--cat-[a-z]+\)$/);
   });
 
   it("handles Unicode in the domain without throwing", () => {
-    // The hash iterates charCodeAt — for surrogate pairs this reads each
-    // code unit independently, which is fine (just deterministic, not
-    // canonically "right"). Test guards against a future regression to
-    // codePointAt that doesn't account for the surrogate-pair width.
-    expect(() => placeholderFor("café.dot")).not.toThrow();
-    expect(() => placeholderFor("🎯.dot")).not.toThrow();
+    // The hash iterates charCodeAt — for surrogate pairs this reads each code
+    // unit independently, which is fine (deterministic, not canonically
+    // "right"). Guards against a future regression to codePointAt.
+    expect(() => cardColorForDomain("café.dot")).not.toThrow();
+    expect(() => cardColorForDomain("🎯.dot")).not.toThrow();
   });
 });

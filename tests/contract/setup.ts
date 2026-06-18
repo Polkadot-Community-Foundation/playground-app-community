@@ -36,6 +36,8 @@ import { createClient, type PolkadotClient, type PolkadotSigner } from "polkadot
 import { getWsProvider } from "polkadot-api/ws";
 import {
   ContractManager,
+  createContract,
+  createContractRuntimeFromClient,
   type CdmJson,
   type Contract,
   type ContractDef,
@@ -231,27 +233,50 @@ export function getHandles(): Promise<ContractHandles> {
 
     const client: PolkadotClient = createClient(getWsProvider(rpcUrl));
 
-    // Live address resolution: the on-chain CDM meta-registry is queried at
-    // handle-init for `REGISTRY_NAME`, so a fresh `cdm deploy` is picked up
-    // without a follow-up `cdm i`. Mirrors `ContractManager.fromLiveClient`
-    // in [src/utils/contracts.ts] and [scripts/smoke-test-points.ts]. ABIs
-    // come from the installed cdm.json snapshot — run `cdm i -n paseo
-    // @staging/playground-registry` after a contract change so the snapshot
-    // matches the deployed binary. The defaultOrigin matches the dev
-    // fallback the SDK would have used silently — pinning it suppresses
-    // the per-query "using dev fallback (Alice) for query dry-run" warning.
+    // `defaultOrigin` matches the dev fallback the SDK would have used silently
+    // — pinning it suppresses the per-query "using dev fallback (Alice) for
+    // query dry-run" warning.
     const aliceSs58 = devAccount("Alice", "//Alice").ss58;
-    const manager = await ContractManager.fromLiveClient(
-      cdmJson as unknown as CdmJson,
-      client,
-      paseo_asset_hub,
-      {
-        defaultOrigin: aliceSs58,
-        registryOrigin: aliceSs58,
-        libraries: [REGISTRY_NAME],
-      },
-    );
-    const runtime = manager.getRuntime();
+
+    // REGISTRY_ADDRESS override: target a specific instance directly (e.g. a
+    // freshly instantiated contract whose on-chain registration is still
+    // pending or stuck). Skips live-resolution entirely — the override exists
+    // precisely because the on-chain registry lookup is unavailable, so running
+    // `fromLiveClient` would waste a round-trip (or hang). ABI comes from the
+    // cdm.json snapshot (same contract source ⇒ compatible).
+    const overrideAddr = process.env.REGISTRY_ADDRESS as HexString | undefined;
+
+    let runtime: ContractRuntime;
+    let registry: Contract<ContractDef>;
+    let address: HexString;
+
+    if (overrideAddr) {
+      runtime = createContractRuntimeFromClient(client, paseo_asset_hub);
+      const abi = (cdmJson as unknown as CdmJson).contracts![REGISTRY_NAME].abi;
+      registry = createContract(runtime, overrideAddr, abi, { defaultOrigin: aliceSs58 });
+      address = overrideAddr;
+    } else {
+      // Live address resolution: the on-chain CDM meta-registry is queried at
+      // handle-init for `REGISTRY_NAME`, so a fresh `cdm deploy` is picked up
+      // without a follow-up `cdm i`. Mirrors `ContractManager.fromLiveClient`
+      // in [src/utils/contracts.ts] and [scripts/smoke-test-points.ts]. ABIs
+      // come from the installed cdm.json snapshot — run `cdm i -n paseo
+      // @staging/playground-registry` after a contract change so the snapshot
+      // matches the deployed binary.
+      const manager = await ContractManager.fromLiveClient(
+        cdmJson as unknown as CdmJson,
+        client,
+        paseo_asset_hub,
+        {
+          defaultOrigin: aliceSs58,
+          registryOrigin: aliceSs58,
+          libraries: [REGISTRY_NAME],
+        },
+      );
+      runtime = manager.getRuntime();
+      registry = manager.getContract(REGISTRY_NAME);
+      address = manager.getAddress(REGISTRY_NAME);
+    }
 
     // PAPI's runtime API calls default `at` to the latest FINALIZED block.
     // On a slow-finalizing local chain (PPN's default ~30s GRANDPA delay)
@@ -261,9 +286,7 @@ export function getHandles(): Promise<ContractHandles> {
     // non-existent `info[domain]` and traps. Override `dryRunCall` to
     // read at "best" so queries see the new state as soon as the tx is in
     // a best block. Production (paseo) keeps the default "finalized" —
-    // public chains have real reorg risk and the latency is fine. Applied
-    // AFTER `fromLiveClient` resolves so the initial registry queries
-    // (which need finalized reads) aren't affected.
+    // public chains have real reorg risk and the latency is fine.
     if (target === "local") {
       const unsafe = client.getUnsafeApi();
       (runtime as { dryRunCall: unknown }).dryRunCall = (
@@ -284,9 +307,6 @@ export function getHandles(): Promise<ContractHandles> {
           { at: "best" },
         );
     }
-
-    const registry = manager.getContract(REGISTRY_NAME);
-    const address = manager.getAddress(REGISTRY_NAME);
 
     return {
       runtime,

@@ -12,6 +12,7 @@
   --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-serif: "DM Serif Display", serif;
   --font-code: "DM Mono", ui-monospace, "JetBrains Mono", "Courier New", monospace;
+  --font-pixel: "Sixtyfour", ui-monospace, "JetBrains Mono", monospace;
 
   --grey-50: #fafaf9;
   --grey-200: #e7e5e4;
@@ -24,7 +25,14 @@
   --grey-900: #1c1917;
   --grey-950: #0c0a09;
 
-  --color-bg: var(--grey-950);
+  /* Flat page black. On desktop the grain canvas covers it; on mobile
+     GrainCanvas skips rendering (host webview mishandles mix-blend-mode)
+     and this is the background the page actually shows. Must stay
+     near-black: the island PNG has a baked-in black background that
+     `mix-blend-mode: lighten` blends into this backdrop — a lighter value
+     would show the image's box. Also used as "near-black text" on light
+     fills (pills, tags, CTAs). */
+  --color-bg: #04040a;
   --color-surface: #151515;
   --color-surface-secondary: var(--grey-800);
   --color-text-primary: var(--grey-50);
@@ -42,13 +50,16 @@
   /* Category hue palette (mockup parity) — used by filter-pill[data-tag] */
   --cat-social:       #7FB8F0;
   --cat-chat:         #B8A6E0;
-  --cat-defi:         #F5C84A;
+  --cat-site:         #F5C84A;
   --cat-utility:      #C9F07F;
   --cat-gaming:       #8F7CF0;
   --cat-marketplace:  #F08A5D;
   --cat-irl:          #F07FB8;
   --cat-moddable:     #3a9565;
   --cat-private:      var(--color-text-tertiary);
+
+  /* "Featured sample" identity — amber, deliberately outside the --cat-* palette */
+  --featured:         #FFB020;
 
   --max-w-shell: 1240px;
 
@@ -76,7 +87,9 @@ body {
   /* No z-index — keeping app-shell out of its own stacking context lets
      mix-blend-mode descendants composite against the .grain-bg canvas. */
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  /* Rail column sized so the longest pill ("Leaderboard" at 22px) fits
+     inside the rail's 16px gutters without overflowing into the centre. */
+  grid-template-columns: 244px minmax(0, 1fr);
   min-height: 100dvh;
   max-width: var(--max-w-shell);
   margin-inline: auto;
@@ -93,6 +106,8 @@ body {
 .left-rail {
   position: sticky;
   top: 32px; /* sits below the fixed-top event ticker */
+  user-select: none;
+  -webkit-user-select: none;
   align-self: start;
   height: calc(100dvh - 32px);
   display: flex;
@@ -106,12 +121,12 @@ body {
 .left-rail .nav-item {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 18px;
+  gap: 16px;
+  padding: 14px 20px;
   border-radius: var(--r-pill);
   color: var(--color-text-secondary);
   background: transparent;
-  font: 500 20px/1 var(--font-sans);
+  font: 500 22px/1 var(--font-sans);
   text-decoration: none;
   transition: color 0.2s, background 0.2s;
 }
@@ -156,32 +171,30 @@ body {
    Set/Change username button. */
 .tab-header--inline {
   flex-direction: row;
+  /* The title is the tallest item in the row, so centring keeps it pinned at
+     the top (matching the column-layout Apps / Leaderboard headers) while the
+     shorter action button centres vertically against it. */
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
 }
 
-.tab-playground {
-  position: relative;
-  z-index: 1;
-  min-height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
+/* .tab-playground is defined in the Playground-journey section further down
+   (one canonical block) — unlike .tab-apps/.tab-profile it must NOT get a
+   z-index: the island PNG's mix-blend-mode has to reach .grain-bg. */
 
 .tab-apps {
   position: relative;
   z-index: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 32px;
+  gap: 24px;
 }
 
 .tab-profile {
   position: relative;
   z-index: 1;
+  padding-top: 12px;
 }
 
 .tab-center {
@@ -210,12 +223,18 @@ body {
 }
 
 .tab-right-rail .filters.tab-rail-filters,
+.tab-right-rail .filters.tab-rail-toggles,
 .tab-right-rail .filters.tab-rail-sort {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: flex-start;
   max-width: none;
+  /* Reset the base `.filters` `margin: 0 auto`. In this column flex rail, auto
+     side-margins suppress the stretch and shrink each row to its content width,
+     centring the pills — most visible on the short sort row. `margin: 0` lets
+     the row fill the rail so justify-content: flex-start can left-align. */
+  margin: 0;
   padding: 0;
   gap: 8px;
 }
@@ -228,24 +247,24 @@ body {
 }
 
 .leaderboard-card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--r-card);
-  padding: 12px 20px 16px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
   max-width: 920px;
 }
 
 .leaderboard-colhead {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 96px;
+  grid-template-columns: 96px minmax(0, 1fr) 160px;
   gap: 24px;
   padding: 14px 8px 12px;
   font-family: var(--font-code);
-  font-size: 11px;
+  font-size: 16px;
   font-weight: 500;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-primary);
   border-bottom: 1px solid var(--color-border-strong);
 }
 
@@ -261,59 +280,79 @@ body {
 
 .leaderboard-row {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 96px;
+  grid-template-columns: 96px minmax(0, 1fr) 160px;
   gap: 24px;
-  align-items: center;
-  padding: 14px 8px;
+  padding: 12px 8px;
   border-bottom: 1px solid var(--color-border);
+  transition: background 120ms ease;
 }
+
+/* Hover tints the row with a little of its own hue. */
+.leaderboard-row:hover {
+  background: color-mix(in srgb, var(--row-hue) 10%, transparent);
+}
+
+/* Per-rank hue rotation — reuses the existing --cat-* palette (no new colors). */
+.leaderboard-row[data-rank-hue="0"] { --row-hue: var(--cat-site); }        /* yellow */
+.leaderboard-row[data-rank-hue="1"] { --row-hue: var(--cat-marketplace); } /* coral  */
+.leaderboard-row[data-rank-hue="2"] { --row-hue: var(--cat-social); }      /* sky    */
+.leaderboard-row[data-rank-hue="3"] { --row-hue: var(--cat-utility); }     /* green  */
+.leaderboard-row[data-rank-hue="4"] { --row-hue: var(--cat-gaming); }      /* violet */
 
 .leaderboard-row:last-child {
   border-bottom: 0;
 }
 
+.leaderboard-rank,
+.leaderboard-name,
+.leaderboard-xp {
+  font-family: var(--font-pixel);
+  font-size: 30px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--row-hue);
+}
+
 .leaderboard-rank {
-  font-family: var(--font-code);
-  font-size: 14px;
-  color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
 .leaderboard-name {
-  font-family: var(--font-code);
-  font-size: 14px;
-  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.15);
 }
 
 .leaderboard-profile-link {
   text-decoration: none;
   border-radius: 4px;
+  color: var(--row-hue);
 }
 
 .leaderboard-profile-link:hover,
 .leaderboard-profile-link:focus-visible {
-  color: var(--color-accent);
+  opacity: 0.8;
 }
 
 .leaderboard-xp {
-  font-family: var(--font-code);
   font-variant-numeric: tabular-nums;
-  font-size: 14px;
-  font-weight: 500;
   text-align: right;
-  color: var(--color-text-primary);
 }
 
+/* "you" row — inverted white background with black text and a static `>` marker. */
 .leaderboard-row-me {
-  background: var(--color-accent-dim);
+  position: relative;
+  background: #fff;
   border-radius: 4px;
   border-bottom-color: transparent;
+}
+
+.leaderboard-row-me:hover {
+  background: #f2eee4;
 }
 
 .leaderboard-row-me + .leaderboard-row {
@@ -322,26 +361,53 @@ body {
 
 .leaderboard-row-me .leaderboard-rank,
 .leaderboard-row-me .leaderboard-name,
-.leaderboard-row-me .leaderboard-xp {
-  color: var(--color-accent);
-  font-weight: 600;
+.leaderboard-row-me .leaderboard-xp,
+.leaderboard-row-me .leaderboard-profile-link {
+  color: #0d0d0f;
+}
+
+.leaderboard-row-me .leaderboard-name {
+  text-shadow: none;
+}
+
+.leaderboard-row-me::before {
+  content: ">";
+  position: absolute;
+  right: calc(100% + 24px);
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-pixel);
+  font-size: 30px;
+  letter-spacing: 0.04em;
+  color: #fff;
+  pointer-events: none;
+  /* Resting (current) position is the leftmost; it nudges right and back. */
+  animation: leaderboard-pointer 0.8s steps(3) infinite;
+}
+
+@keyframes leaderboard-pointer {
+  0%   { transform: translate(0, -50%); }
+  50%  { transform: translate(10px, -50%); }
+  100% { transform: translate(0, -50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaderboard-row-me::before {
+    animation: none;
+    transform: translateY(-50%);
+  }
 }
 
 .leaderboard-you-badge {
   font-family: var(--font-code);
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--color-accent);
-  background: var(--color-accent-dim);
-  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
-  padding: 2px 8px;
+  color: #0d0d0f;
+  background: transparent;
+  border: 1px solid rgba(13, 13, 15, 0.3);
+  padding: 3px 9px;
   border-radius: var(--r-pill);
-}
-
-.leaderboard-row-me .leaderboard-you-badge {
-  background: var(--color-bg);
-  border-color: var(--color-accent);
 }
 
 .leaderboard-empty {
@@ -350,10 +416,367 @@ body {
   font-size: 14px;
 }
 
+/* Title + actions share one row: heading left, buttons pinned right. */
+.leaderboard-title-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.leaderboard-header-actions {
+  margin-left: auto; /* keeps actions right-aligned even when the title is hidden (fullscreen) */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Header buttons (fullscreen toggle + "Find me") share one look. */
+.leaderboard-fs-btn,
+.leaderboard-find-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-pill);
+  color: var(--color-text-primary);
+  font: 500 13px/1 var(--font-sans);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.leaderboard-fs-btn:hover,
+.leaderboard-find-btn:hover {
+  background: var(--color-surface-raised);
+}
+
+/* Fullscreen is a desktop affordance — hide the toggle on mobile. */
+@media (max-width: 820px) {
+  .leaderboard-fs-btn {
+    display: none;
+  }
+}
+
+/* Fullscreen mode — hide the rails + event ticker and let the grid span full width. */
+body.is-leader-fullscreen .left-rail,
+body.is-leader-fullscreen .event-ticker {
+  display: none;
+}
+
+body.is-leader-fullscreen .app-shell {
+  grid-template-columns: 1fr;
+  padding-top: 0;
+  /* Lift the normal 1240px shell cap so the fullscreen board can use the wider,
+     centred max-width set on .tab-leaderboard (the venue-screen sizing). */
+  max-width: none;
+}
+
+/* Fullscreen shows just the board + exit button — drop the title, lead, XP link. */
+body.is-leader-fullscreen .tab-title,
+body.is-leader-fullscreen .tab-lead,
+body.is-leader-fullscreen .leaderboard-xp-link {
+  display: none;
+}
+
+/* Fullscreen spans the FULL viewport (no 1320px cap) so it fills a big venue
+   screen, with side padding that grows on wide displays. The wordmark + column
+   header stay pinned across the top; the board + widgets occupy the bounded
+   area beneath. Sizes below use clamp(min, vw, max): floored at the current
+   values (1080p looks unchanged) and growing on 4K / 100" screens. */
+body.is-leader-fullscreen .tab-leaderboard {
+  height: 100dvh;
+  /* Full-bleed: use the whole panel width (just side padding), no centred cap —
+     the venue wants the screen filled. Type + columns below scale up with the
+     viewport so the wider area fills rather than looks sparse. */
+  max-width: none;
+  padding: 0 clamp(24px, 6.4vw, 256px) 32px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* no page scroll — only the inner list(s) scroll */
+}
+body.is-leader-fullscreen .tab-leaderboard .tab-center {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The board + widgets stage. Two layouts, switched by [data-widget-layout]:
+   - "side":   a grid with the board (1fr) and a pinned widget column; the
+               board's own <ol> scrolls, each widget list scrolls itself.
+   - "bottom": the stage IS the scroller — board rows then the widgets, revealed
+               as a footer when it scrolls to the end. */
+body.is-leader-fullscreen .leaderboard-fs-stage {
+  flex: 1;
+  min-height: 0;
+}
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="side"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(420px, 26vw, 1000px);
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: clamp(40px, 4vw, 168px);
+}
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="bottom"] {
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="bottom"]::-webkit-scrollbar {
+  display: none;
+}
+
+body.is-leader-fullscreen .leaderboard-card {
+  max-width: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* "side": the row list is the lone scroller (scrollbar hidden so the columns
+   stay aligned with the pinned header). */
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="side"] .leaderboard-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+body.is-leader-fullscreen .leaderboard-list::-webkit-scrollbar {
+  display: none;
+}
+/* "bottom": the column header pins within the stage scroller as rows pass. */
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="bottom"] .leaderboard-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--color-bg);
+}
+
+/* Fluid type for the main board on big screens (floored at the current sizes,
+   so 1080p is unchanged). colhead + rows share the column template to stay
+   aligned. */
+body.is-leader-fullscreen .leaderboard-colhead,
+body.is-leader-fullscreen .leaderboard-row {
+  /* Wider XP track (right) so 5–6 digit scores never truncate; roomy rank track
+     for up to 4-digit ranks. */
+  grid-template-columns: clamp(110px, 5vw, 220px) minmax(0, 1fr) clamp(220px, 14vw, 560px);
+}
+body.is-leader-fullscreen .leaderboard-colhead {
+  font-size: clamp(15px, 0.95vw, 38px);
+}
+body.is-leader-fullscreen .leaderboard-rank,
+body.is-leader-fullscreen .leaderboard-name,
+body.is-leader-fullscreen .leaderboard-xp {
+  /* A touch smaller than before — neater, and helps the XP fit its track. */
+  font-size: clamp(28px, 1.8vw, 82px);
+}
+
+/* Widgets container — a flex column in "side" (two stacked equal panels), a
+   two-up footer grid in "bottom". */
+body.is-leader-fullscreen .leaderboard-fs-widgets {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(20px, 1.6vw, 40px);
+}
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="bottom"] .leaderboard-fs-widgets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(20px, 2vw, 48px);
+  margin-top: clamp(28px, 3vw, 64px);
+}
+
+.leaderboard-widget {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  /* Accent the panel: coloured outline + a filled coloured heading box. Each
+     panel sets --widget-accent from the category palette (see [data-accent]). */
+  border: 1.5px solid var(--widget-accent, var(--color-border-strong));
+  border-radius: 16px;
+  overflow: hidden; /* clips the full-bleed header to the rounded top corners */
+}
+.leaderboard-widget[data-accent="stars"] { --widget-accent: var(--cat-site); }    /* gold */
+.leaderboard-widget[data-accent="mods"]  { --widget-accent: var(--cat-utility); } /* lime green */
+/* "bottom": panels size to content and show their lists inline (no inner
+   scroll) so the single stage scroll reveals them. */
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="bottom"] .leaderboard-widget {
+  flex: none;
+}
+body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="bottom"] .leaderboard-widget-list {
+  flex: none;
+  overflow: visible;
+}
+
+.leaderboard-widget-head {
+  flex: 0 0 auto;
+  /* Coloured box, black text — high-contrast banner readable across a room. */
+  background: var(--widget-accent);
+  color: #000;
+  font-family: var(--font-code);
+  font-size: clamp(18px, 1.1vw, 44px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-transform: uppercase;
+  padding: clamp(12px, 0.8vw, 30px) clamp(14px, 0.9vw, 36px);
+}
+.leaderboard-widget-empty {
+  color: var(--color-text-secondary);
+  padding: 14px 16px;
+}
+.leaderboard-widget-list {
+  flex: 1;
+  min-height: 0;
+  list-style: none;
+  margin: 0;
+  padding: 4px clamp(14px, 0.9vw, 28px) 8px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  font-size: clamp(15px, 0.95vw, 36px);
+}
+.leaderboard-widget-list::-webkit-scrollbar {
+  display: none;
+}
+.leaderboard-widget-row {
+  display: grid;
+  grid-template-columns: clamp(28px, 1.8vw, 48px) minmax(0, 1fr) auto;
+  gap: clamp(10px, 0.7vw, 20px);
+  align-items: baseline;
+  padding: clamp(9px, 0.6vw, 16px) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.leaderboard-widget-rank {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+.leaderboard-widget-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+}
+.leaderboard-widget-count {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--widget-accent); /* counts pop in the panel's accent colour */
+  text-align: right;
+}
+
+/* Below the venue-screen size (laptop preview / narrow windows): in "side",
+   drop the widget column and let the board span full width. */
+@media (max-width: 1100px) {
+  body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="side"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.is-leader-fullscreen .leaderboard-fs-stage[data-widget-layout="side"] .leaderboard-fs-widgets {
+    display: none;
+  }
+}
+
+/* Big-screen wordmark above the board — fullscreen only. Decorative; the SR
+   heading is the hidden .tab-title. Sized to span the table width: the table
+   sits in .tab (max-width 1320, 32px side padding), so its content width is
+   (min(100vw, 1320px) - 64px). Dividing by the fit divisor scales the 14-glyph
+   Sixtyfour string to that width (divisor tuned by eye — glyph advances aren't
+   perfectly uniform). */
+.leaderboard-fs-title {
+  display: none;
+}
+
+/* Current wordmark colour — a registered custom prop so it can be animated
+   (stepped) through the category palette one colour at a time. */
+@property --fs-cat {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: #7fb8f0;
+}
+
+body.is-leader-fullscreen .leaderboard-fs-title {
+  display: block;
+  width: 100%;
+  margin: 8px 0 64px;
+  padding: 0.06em 0;
+  font-family: var(--font-pixel);
+  /* Sized so the 14-glyph wordmark fits the full-bleed content width on one line.
+     The pixel font's advance is ~1em/glyph (14 glyphs ≈ 14em); dividing the
+     width by ~16 leaves a safe margin against clipping. */
+  font-size: calc(min(95vw, 3600px) / 16);
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+  /* Rest: text in the current category colour, no fill. The blink keyframes
+     invert this (colour fill + black text). */
+  color: var(--fs-cat);
+  background-color: transparent;
+  /* filter: drop-shadow(0 0 26px color-mix(in srgb, var(--fs-cat) 45%, transparent)); */
+  /* Three animations, each with its own timing: entrance (ease), colour cycle
+     (one cat colour per 10s, hard step), and the blink burst (hard on/off). */
+  animation:
+    leaderboard-fs-in 0.45s var(--ease-out-expo) both,
+    leaderboard-fs-cat 70s step-end infinite,
+    leaderboard-fs-blink 10s step-end infinite;
+}
+
+/* Step through the bright category palette — 7 colours, one per 10s, looping
+   back to the first at the end so the cycle is seamless. (Dark --cat-moddable
+   is left out: black-on-dark-green blinks read poorly.) */
+@keyframes leaderboard-fs-cat {
+  0%      { --fs-cat: var(--cat-social); }
+  14.286% { --fs-cat: var(--cat-chat); }
+  28.571% { --fs-cat: var(--cat-site); }
+  42.857% { --fs-cat: var(--cat-utility); }
+  57.143% { --fs-cat: var(--cat-gaming); }
+  71.429% { --fs-cat: var(--cat-marketplace); }
+  85.714% { --fs-cat: var(--cat-irl); }
+  100%    { --fs-cat: var(--cat-social); }
+}
+
+/* Rest for ~8.5s, then three short blinks at the end of the 10s window — each
+   blink fills the background with the current cat colour and turns the text
+   black. The colour cycle (above) is phase-locked to the same 10s grid, so the
+   switch to the next colour lands right after the burst. step-end = hard
+   on/off, no fade. */
+@keyframes leaderboard-fs-blink {
+  0%     { background-color: transparent; color: var(--fs-cat); }
+  93%    { background-color: transparent; color: var(--fs-cat); }
+  93.5%  { background-color: var(--fs-cat); color: #000; }
+  94.5%  { background-color: transparent; color: var(--fs-cat); }
+  95.5%  { background-color: var(--fs-cat); color: #000; }
+  96.5%  { background-color: transparent; color: var(--fs-cat); }
+  97.5%  { background-color: var(--fs-cat); color: #000; }
+  98.5%  { background-color: transparent; color: var(--fs-cat); }
+  100%   { background-color: transparent; color: var(--fs-cat); }
+}
+
+@keyframes leaderboard-fs-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.is-leader-fullscreen .leaderboard-fs-title {
+    animation: leaderboard-fs-in 0.45s var(--ease-out-expo) both;
+    color: var(--fs-cat);
+    background-color: transparent;
+  }
+}
+
 @media (max-width: 820px) {
   .app-shell {
     grid-template-columns: 1fr;
-    padding-bottom: 72px;
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
   }
 
   .left-rail {
@@ -362,28 +785,52 @@ body {
     left: 0;
     right: 0;
     top: auto;
-    height: 64px;
+    height: auto;
     flex-direction: row;
     justify-content: space-around;
     align-items: center;
-    padding: 8px 16px;
+    /* Taller bar, icons lifted clear of the iOS home-indicator / Apple
+       Intelligence gesture zone (the inset is 0 on home-button devices). */
+    padding: 10px 16px calc(14px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--color-border);
     background: rgba(0, 0, 0, 0.25);
     backdrop-filter: blur(10px);
   }
 
   .left-rail .nav-item {
-    width: 44px;
-    height: 44px;
+    width: 54px;
+    height: 54px;
     padding: 0;
-    border-radius: 12px;
+    border-radius: 14px;
     justify-content: center;
     gap: 0;
+  }
+
+  /* Inactive tabs read dimmer on the mobile bottom bar so the active
+     destination stands out (the active rule above keeps it bright). */
+  .left-rail .nav-item:not(.active) {
+    color: var(--color-text-tertiary);
+  }
+
+  /* Icons scale up with the larger touch targets (22px on desktop). */
+  .left-rail .nav-item svg {
+    width: 26px;
+    height: 26px;
   }
 
   .left-rail .nav-label {
     display: none;
   }
+
+  /* Mobile bottom bar: center the primary destination (Apps) — it's the main
+     nav target. Desktop keeps source order (Apps #2, directly under the home
+     tab). The reorder is visual-only — focus/DOM order is unchanged (same
+     trade-off as the journey "needs your computer" reorder). */
+  .left-rail [data-testid="nav-playground"]  { order: 1; }
+  .left-rail [data-testid="nav-builder"]     { order: 2; }
+  .left-rail [data-testid="nav-apps"]        { order: 3; }
+  .left-rail [data-testid="nav-leaderboard"] { order: 4; }
+  .left-rail [data-testid="nav-profile"]     { order: 5; }
 
   .tab {
     padding: 24px 8px 96px;
@@ -429,8 +876,27 @@ body {
   }
   .leaderboard-colhead,
   .leaderboard-row {
-    grid-template-columns: 40px minmax(0, 1fr) 80px;
-    gap: 16px;
+    grid-template-columns: 48px minmax(0, 1fr) 84px;
+    gap: 12px;
+  }
+  .leaderboard-colhead {
+    font-size: 16px;
+  }
+  .leaderboard-rank,
+  .leaderboard-name,
+  .leaderboard-xp {
+    font-size: 20px;
+    letter-spacing: 0.02em;
+  }
+  /* Let long names wrap instead of truncating. */
+  .leaderboard-name {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    flex-wrap: wrap;
+  }
+  .leaderboard-row-me::before {
+    display: none;
   }
 }
 
@@ -462,11 +928,14 @@ body {
 }
 
 .tab-name {
-  font-family: var(--font-sans);
-  font-size: 39px;
-  font-weight: 400;
-  color: var(--color-text-primary);
-  line-height: 1.1;
+  font-family: var(--font-pixel);
+  font-size: 35px;
+  letter-spacing: -0.1em;
+  color: var(--profile-hue, var(--color-text-primary));
+  /* Long verified usernames have no spaces to break on — let the name wrap to
+     the next line after "Hello," / "Meet 👉" rather than overflow the column. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* ── Install widget ───────────────────────────────────── */
@@ -619,6 +1088,48 @@ body {
   padding: 0 32px;
 }
 
+/* Row holding the density toggle at the top of the Apps content column. */
+.apps-viewbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+/* Grid density toggle — segmented icon control. Active state changes
+   background/colour only (no weight/size swap → no glyph jitter). */
+.view-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-pill);
+  background: var(--color-surface);
+}
+
+.view-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  border: 0;
+  border-radius: calc(var(--r-pill) - 3px);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.view-toggle-btn:hover:not(.active) {
+  color: var(--color-text-secondary);
+}
+
+.view-toggle-btn.active {
+  background: var(--grey-200);
+  color: var(--color-bg);
+}
+
 .filter-pill {
   display: inline-flex;
   align-items: center;
@@ -640,6 +1151,45 @@ body {
 /* Static chips (card tags) aren't interactive — drop the pointer + hover */
 span.filter-pill {
   cursor: default;
+}
+
+/* The leading label/button gets its own full-width row above the category
+   pills, so changing its copy ("filters" ⇄ "remove all filters") never reflows
+   the pills below. */
+.filters-head {
+  flex-basis: 100%;
+  display: flex;
+}
+
+/* Single persistent leading control. Pill dimensions/typography are replicated
+   here (rather than reusing .filter-pill) so its cascade never fights us. The
+   border is always 1px — only its colour fades between transparent (the inert
+   "filters" label state) and visible (the clickable "remove all filters"
+   state). Weight stays 400 in both states (no weight swap). */
+.filters-toggle {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: transparent;
+  font-family: var(--font-code);
+  font-size: 16px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  cursor: default;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.filters-toggle.is-clearable {
+  cursor: pointer;
+  border-color: var(--color-border-strong);
+  color: var(--color-text-secondary);
+}
+
+.filters-toggle.is-clearable:hover {
+  border-color: var(--color-text-tertiary);
+  color: var(--color-text-primary);
 }
 
 .filter-pill:not(.active):not(.is-filled):not(span) {
@@ -670,23 +1220,15 @@ button.filter-pill.active:hover {
    Any tag without a mapping below falls back to white via the rule above. */
 .filter-pill[data-tag="social"]       { --chip-color: var(--cat-social); }
 .filter-pill[data-tag="chat"]         { --chip-color: var(--cat-chat); }
-.filter-pill[data-tag="defi"]         { --chip-color: var(--cat-defi); }
+.filter-pill[data-tag="site"]         { --chip-color: var(--cat-site); }
 .filter-pill[data-tag="utility"]      { --chip-color: var(--cat-utility); }
 .filter-pill[data-tag="gaming"]       { --chip-color: var(--cat-gaming); }
 .filter-pill[data-tag="marketplace"]  { --chip-color: var(--cat-marketplace); }
 .filter-pill[data-tag="irl"]          { --chip-color: var(--cat-irl); }
 .filter-pill[data-tag="private"]      { --chip-color: var(--cat-private); }
+.filter-pill[data-tag="untagged"]     { --chip-color: var(--cat-private); }
 .filter-pill[data-tag="moddable"]     { --chip-color: var(--cat-moddable); }
-
-.filters-pipe {
-  align-self: center;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-code);
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 2px;
-  user-select: none;
-}
+.filter-pill[data-tag="laptop"]       { --chip-color: var(--grey-200); }
 
 .filter-pill-check {
   display: inline-flex;
@@ -833,11 +1375,117 @@ button.filter-pill.active:hover .filter-pill-clear {
   z-index: 40;
 }
 
+/* Set/Change username CTA — reuses the quest-window CTA look (.ucard-cta);
+   drop the island card's top margin since it sits in the header row here. */
+.username-cta {
+  margin-bottom: 20px;
+  margin-top: 0;
+  /* Keep the label on one line so the button stays shorter than the title;
+     otherwise a wrapped two-line button becomes the tallest item in the row
+     and `align-items: center` drags the title down off the Leaderboard line. */
+  white-space: nowrap;
+  flex: none;
+}
+.tab-header--inline .tab-title {
+  margin-bottom: 0;
+}
+
+/* Inline "Saving username…" chip shown in the MyApps header while a claim
+   tx awaits chain confirmation. */
+.username-saving {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #999);
+  white-space: nowrap;
+}
+
+.username-saving-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--accent, #e6007a);
+  border-top-color: transparent;
+  animation: username-saving-spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes username-saving-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Fixed-width box so the rotating copy never shifts the adjacent button —
+   sized to fit the longest line; shorter lines just leave trailing space. */
+.username-saving-msg {
+  display: inline-block;
+  min-width: 13em;
+  white-space: nowrap;
+}
+
+/* Each new line is remounted (keyed on index) and fades in. */
+.username-saving-line {
+  display: inline-block;
+  animation: username-saving-fade 0.3s ease-out;
+}
+
+@keyframes username-saving-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Soft pulse on the header name while it's optimistic-but-unconfirmed.
+   Opacity-only — no weight/size change (avoids glyph-width jitter). */
+.tab-name--pending {
+  animation: tab-name-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes tab-name-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-name--pending {
+    animation: none;
+  }
+  .username-saving-line {
+    animation: none;
+  }
+  .achievement[data-ach-pending="true"] {
+    animation: none;
+  }
+}
+
 /* ── Public profile ──────────────────────────────────── */
 
-.public-profile-panel .account-panel-name {
-  letter-spacing: 0;
-  overflow-wrap: anywhere;
+/* Public profiles breathe more up top than the own-profile tab (which
+   keeps .tab-profile's 12px). */
+.tab-profile.public-profile {
+  padding-top: 48px;
+}
+
+/* "← Leaderboard" back pill atop the page — borrows .back-to-top-btn,
+   only redirecting the hover nudge leftward for the left-pointing arrow. */
+.profile-back-btn {
+  text-decoration: none;
+  align-self: flex-start;
+  margin-bottom: 18px;
+}
+
+.profile-back-btn:hover svg {
+  transform: translateX(-2px);
 }
 
 .public-profile-state {
@@ -863,12 +1511,16 @@ button.filter-pill.active:hover .filter-pill-clear {
   margin: 0;
 }
 
-/* ── Points breakdown (Profile stat strip) ────────────── */
+/* ── Points breakdown (Profile achievements panel) ─────────
+   Total XP hero over a grid of achievement cards. Hue/state ride
+   data-attributes (mirrors .leaderboard-row[data-rank-hue]); the glyph
+   (check/count/pips vs earn hint) carries the state — never colour alone.
+   The widget's `compact` variant keeps the dt/dd strip (.points-stat). */
 
 .points-breakdown {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   margin: -16px 0 32px;
   padding: 18px 20px;
   background: var(--color-surface);
@@ -882,13 +1534,167 @@ button.filter-pill.active:hover .filter-pill-clear {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  padding-right: 12px;
-  border-right: 1px solid var(--color-border);
 }
 
-.points-stat:last-child {
-  border-right: 0;
-  padding-right: 0;
+.achievements-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* Wrap to 2×2 before the tiles get cramped on medium widths. */
+@media (max-width: 900px) {
+  .achievements-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.achievement {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 20px 22px;
+  border-radius: var(--r-card);
+  transition: background 200ms ease-out, border-color 200ms ease-out,
+    box-shadow 200ms ease-out;
+}
+
+.achievement[data-ach-hue="username"] { --ach-hue: var(--cat-social); }
+.achievement[data-ach-hue="deployed"] { --ach-hue: var(--cat-moddable); }
+.achievement[data-ach-hue="modded"]   { --ach-hue: var(--cat-marketplace); }
+.achievement[data-ach-hue="starred"]  { --ach-hue: var(--cat-site); }
+
+.achievement[data-ach-state="unlocked"] {
+  background: color-mix(in srgb, var(--ach-hue) 8%, var(--color-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--ach-hue) 28%, var(--color-border));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ach-hue) 22%, transparent);
+}
+
+.achievement[data-ach-state="locked"] {
+  --ach-hue: var(--color-text-tertiary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+/* Every tile is an <a> shortcut into its Playground journey card. Strip the
+   default anchor look and signal it's interactive; the hover lift rides
+   background/border/shadow only — no weight shift. */
+a.achievement {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+a.achievement[data-ach-state="locked"]:hover {
+  background: var(--color-surface-raised);
+  border-color: color-mix(in srgb, var(--color-text-tertiary) 30%, var(--color-border));
+}
+
+a.achievement[data-ach-state="unlocked"]:hover {
+  background: color-mix(in srgb, var(--ach-hue) 14%, var(--color-surface-raised));
+  border-color: color-mix(in srgb, var(--ach-hue) 40%, var(--color-border));
+}
+
+/* Slow blink while a username claim is optimistic-but-unconfirmed. Reuses the
+   header's opacity-only pulse — no size/weight shift. */
+.achievement[data-ach-pending="true"] {
+  animation: tab-name-pulse 1.4s ease-in-out infinite;
+}
+
+.achievement-icon-disc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ach-hue) 12%, transparent);
+  transition: background 200ms ease-out, opacity 200ms ease-out;
+}
+
+/* Locked dimming rides opacity/colour only — never weight. */
+.achievement[data-ach-state="locked"] .achievement-icon-disc {
+  opacity: 0.65;
+}
+
+.achievement-icon {
+  color: var(--ach-hue);
+  transition: color 200ms ease-out;
+}
+
+.achievement-title {
+  font-family: var(--font-code);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  /* Wrap rather than ellipsis-clip — a two-line title is fine. */
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.achievement-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  font-family: var(--font-serif);
+  font-size: 28px;
+  line-height: 1;
+  color: var(--ach-hue);
+  font-variant-numeric: tabular-nums;
+  transition: color 200ms ease-out;
+}
+
+.achievement-state--progress {
+  gap: 10px;
+  font-size: 22px;
+}
+
+.achievement-pips {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.achievement-pips i {
+  width: 22px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-border-strong);
+  transition: background 200ms ease-out;
+}
+
+.achievement-pips i[data-filled="true"] {
+  background: var(--ach-hue);
+}
+
+/* A locked card wears these two lines on its face (otherwise it reads
+   as empty) — the XP-on-offer sticker chip, then how to earn it. */
+.achievement-earn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* The same XpLabel sticker as quest cards/windows, tinted with the tile hue. */
+.achievement-earn .xp-label {
+  --xp-color: var(--ach-hue);
+}
+
+.achievement-earn-text {
+  font: 400 13px/1.5 var(--font-sans);
+  color: var(--color-text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .achievement,
+  .achievement-icon,
+  .achievement-icon-disc,
+  .achievement-pips i,
+  .achievement-state { transition: none; }
 }
 
 .points-stat-label {
@@ -919,31 +1725,169 @@ button.filter-pill.active:hover .filter-pill-clear {
   color: var(--color-accent);
 }
 
-@media (max-width: 640px) {
-  .account-panel-row {
-    align-items: flex-start;
-    flex-direction: column;
-  }
+/* Cards variant only: the Total XP hero matches the header username — same
+   pixel font, same 31px, same per-profile hue. Scoped so the widget's
+   compact strip (and its .widget-root overrides) keep the 28px serif value. */
+.points-breakdown--cards .points-stat-total .points-stat-value {
+  font-family: var(--font-pixel);
+  font-size: 34px;
+  letter-spacing: -0.1em;
+  color: var(--profile-hue, var(--color-accent));
+  margin-top: 4px;
+}
 
-  .points-breakdown {
+@media (max-width: 640px) {
+  .achievements-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    row-gap: 16px;
-  }
-  .points-stat:nth-child(2) {
-    border-right: 0;
-    padding-right: 0;
   }
   .points-stat-value {
     font-size: 24px;
   }
+  .points-breakdown--cards .points-stat-total .points-stat-value {
+    font-size: 32px;
+  }
+  .achievement {
+    padding: 16px 18px;
+  }
 }
 
-/* ── App grid (vertical feed) ─────────────────────────── */
+/* ── App grid (density toggle: 1-col / 2-col / thin list) ─────────────────── */
 
 .grid {
+  display: grid;
+  /* minmax(0, 1fr) (not 1fr) so columns can shrink below their content's
+     min-width — otherwise an image's intrinsic width blows the grid out of
+     the centre column and the cards slide under the right rail. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));   /* base = 2-up */
+  gap: 16px;
+}
+
+.grid[data-view="1col"] { grid-template-columns: minmax(0, 1fr); }
+.grid[data-view="thin"] { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+
+/* Grid items must be allowed to shrink for the minmax(0, …) above to take hold. */
+.grid > .app-post { min-width: 0; }
+
+/* 2-up = bento: two independent columns laid out left→right. Each card's column
+   is keyed on its domain in AppsTab (not its array index), so live inserts and
+   removals never reshuffle the grid. flex-start keeps each column packing to its
+   own content height (no equal-height rows leaving dead space under short cards).
+   The container `gap` is the horizontal space BETWEEN the two columns; per-card
+   vertical spacing lives on `.grid-col`. */
+.grid[data-view="2col"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.grid[data-view="2col"] > .grid-col {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+/* 2-up cards lead with the image: flex column + order pulls it above the title.
+   Narrower tiles get tighter horizontal padding than the 22px base. */
+.grid[data-view="2col"] .app-post {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 20px 16px;
+}
+.grid[data-view="2col"] .app-post-image { order: -1; }
+
+/* 2-up cards are narrower: shrink the title and let long words wrap so they
+   don't collide with the Launch chip. */
+.grid[data-view="2col"] .app-post-title {
+  font-size: 22px;
+}
+.grid[data-view="2col"] .app-post-title-text {
+  overflow-wrap: anywhere;
+}
+
+/* Thin compact row — a single vertically-centred flex line:
+   [ thumbnail ] [ title ][ tags ] … [ star ] */
+.grid[data-view="thin"] .app-post {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.grid[data-view="thin"] .app-post-image {
+  order: 0;
+  flex: 0 0 auto;
+  width: 120px;
+  aspect-ratio: 16 / 9;
+  max-height: none;
+  margin: 0;
+}
+.grid[data-view="thin"] .app-post-image img {
+  height: 100%;
+  max-height: none;
+  object-fit: cover;   /* a small thumbnail may crop — acceptable at this size */
+}
+.grid[data-view="thin"] .app-post-head {
+  order: 1;
+  /* Fixed-width title column: can't grow to one line, so a long title WRAPS
+     instead of overflowing onto the tags. Keeps tags on a consistent axis.
+     min-width:0 defeats the flex item's default `min-width:auto`, which would
+     otherwise expand the column to the title's content width (no wrap). */
+  /* flex: 0 0 200px; */
+  min-width: 0;
+  margin: 0;
+  align-items: center;
+}
+/* Hard 200px on the title itself (override base `flex: 1`) so its text is
+   forced to wrap regardless of how the head column resolves. */
+.grid[data-view="thin"] .app-post-title {
+  font-size: 16px;
+  min-width: 0;
+  max-width: max-content;
+}
+/* Break long tokens / inside words so the title always wraps inside 200px.
+   The text lives in the clamp child now, so the break rule targets it. */
+.grid[data-view="thin"] .app-post-title-text {
+  min-width: 0;
+}
+.grid[data-view="thin"] .app-post-title-clamp {
+  word-break: break-all;
+}
+/* Drop the big Launch pill and blurb in the compact row. */
+.grid[data-view="thin"] .app-post-head .btn-primary { display: none; }
+.grid[data-view="thin"] .app-post-blurb { display: none; }
+/* Tags sit next to the title and are a touch smaller here. */
+.grid[data-view="thin"] .app-post-tags {
+  order: 2;
+  /* Grow into the gap between title and star, but NEVER shrink — flex-shrink:0
+     means the box can't collapse to 0 and let chips spill onto the star. */
+  flex: 1 0 auto;
+  /* flex-direction: column; */
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: right;   /* centre chips in that space */
+  align-content: center;     /* and vertically when they wrap to 2+ lines */
+  margin: 0;
+}
+.grid[data-view="thin"] .app-post-tags .filter-pill {
+  font-size: 13px;
+  padding: 3px 9px;
+}
+.grid[data-view="thin"] .app-post-bar {
+  order: 3;
+  flex: 0 0 100px;   /* fixed 100px column for the star */
+  border-top: 0;
+  padding: 0;
+}
+/* Compact row keeps just the star; mod/share collapse away. */
+.grid[data-view="thin"] .app-post-bar .bar-btn-mod,
+.grid[data-view="thin"] .app-post-bar .bar-btn-share { display: none; }
+
+/* Mobile: any grid is a single column (covers Profile "My Apps" too; the Apps
+   grid is already forced to 1-col via effectiveView). */
+@media (max-width: 820px) {
+  .grid,
+  .grid[data-view] { grid-template-columns: minmax(0, 1fr); }
 }
 
 .grid > .app-post {
@@ -1004,6 +1948,71 @@ button.filter-pill.active:hover .filter-pill-clear {
   z-index: 50;
 }
 
+/* Featured sample (pinned) cards: a top accent edge + soft wash — the journey
+   active-quest treatment (.journey-section.is-active-quest) rotated to the top
+   edge. All featured cards share the dedicated --featured hue (a uniform
+   "featured" identity), while the image keeps its own --card-color placeholder.
+   The "Featured sample" sticker (.app-post-featured) sits on the image. */
+.app-post[data-pinned="true"] {
+  border-top: 2px solid var(--featured);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--featured) 9%, var(--color-surface)),
+    var(--color-surface) 55%
+  );
+}
+
+.app-post[data-pinned="true"]:hover {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--featured) 13%, var(--color-surface-raised)),
+    var(--color-surface-raised) 55%
+  );
+}
+
+/* The hand-stuck "Featured sample" sticker — modeled on .xp-label (tinted pill,
+   uppercase mono). Tilt is an inline per-mount random transform (see AppCard,
+   mirrors XpLabel). Tinted fill is mixed over the surface (not transparent) so
+   it stays legible over any icon. */
+.app-post-featured {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;            /* icon ↔ label, like the category .filter-pill */
+  padding: 6px 14px;   /* same font + padding as the category .filter-pill */
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--featured) 14%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--featured) 38%, transparent);
+  color: var(--featured);
+  font-family: var(--font-code);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+/* Compact/thin: smaller sticker sitting just above the little thumbnail, nudged
+   left into the card's padding (safe area). The image stops clipping so it can
+   poke out; the icon keeps its rounded corners. */
+.grid[data-view="thin"] .app-post[data-pinned="true"] .app-post-image { overflow: visible; }
+.grid[data-view="thin"] .app-post[data-pinned="true"] .app-post-image img { border-radius: var(--r-card); }
+.app-post-featured-pin { width: 14px; height: 14px; flex: none; }
+
+.grid[data-view="thin"] .app-post-featured {
+  top: -7px;
+  left: -8px;
+  right: auto;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+}
+.grid[data-view="thin"] .app-post-featured-pin { width: 10px; height: 10px; }
+
 .app-post-head {
   display: flex;
   align-items: flex-start;
@@ -1027,8 +2036,23 @@ button.filter-pill.active:hover .filter-pill-clear {
 }
 
 .app-post-title-text {
-  display: inline;
+  /* Block flex item that seats the title beside the pin. Plain block + flex:1
+     + min-width:0 give the clamp child a definite width to wrap against. */
+  flex: 1;
   min-width: 0;
+}
+
+.app-post-title-clamp {
+  /* Block-level -webkit-box → caps the title at 3 lines and truncates with an
+     ellipsis (same mechanism as .app-post-blurb; a clamp on the flex item itself
+     drops the ellipsis). overflow-wrap:anywhere breaks inside an over-long token
+     so it can't escape the clamp. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 .app-post-pin {
@@ -1090,6 +2114,12 @@ button.filter-pill.active:hover .filter-pill-clear {
   line-height: 1.5;
   color: var(--color-text-secondary);
   margin-bottom: 14px;
+  /* Clamp the (often README-derived) blurb to 3 lines with an ellipsis. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .app-post-tags {
@@ -1100,19 +2130,44 @@ button.filter-pill.active:hover .filter-pill-clear {
 }
 
 .app-post-image {
-  aspect-ratio: 16 / 9;
+  position: relative;   /* positioning context for the .app-post-featured sticker */
+  width: 100%;   /* always full width — aspect-ratio + max-height would otherwise
+                    derive width from height inside a flex-column card */
   border-radius: var(--r-card);
   overflow: hidden;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  background: var(--card-color, var(--color-bg));   /* shows only when empty */
   margin-bottom: 14px;
+  /* The box caps height and clips a tall image (crop). Short/wide images show
+     in full. No border/padding so the image meets the rounded corners. The
+     image is centred so the crop trims top and bottom evenly, not just the
+     bottom. */
+  max-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* No icon → the wrapper has no <img>: show the per-app colour as a 16:9 block.
+   (:not(:has(img)) rather than :empty so a featured sticker child doesn't count
+   as content and collapse the placeholder.) */
+.app-post-image:not(:has(img)) {
+  aspect-ratio: 16 / 9;
+}
+
+/* 1-col: no icon → show nothing (no colored block, unlike 2col/thin) — except
+   featured cards, which keep the block so their sticker has a home. */
+.grid[data-view="1col"] .app-post:not([data-pinned="true"]) .app-post-image:not(:has(img)) {
+  display: none;
 }
 
 .app-post-image img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
   display: block;
+  width: 100%;        /* full width of the box */
+  height: auto;       /* natural ratio; overflow past max-height is clipped */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
 
 /* ── Action bar (Mod / Fav / Share) ───────────────────── */
@@ -1280,7 +2335,10 @@ button.filter-pill.active:hover .filter-pill-clear {
 }
 
 @media (max-width: 820px) {
-  .popup {
+  /* The bottom-sheet treatment is for rich panels (ModPopup). The locked-hint
+     nudge stays an anchored popover at every width — see LockedHint.tsx — so
+     it's excluded here. */
+  .popup:not(.locked-hint) {
     position: fixed;
     top: auto;
     left: 0;
@@ -1293,7 +2351,7 @@ button.filter-pill.active:hover .filter-pill-clear {
     box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
   }
 
-  .popup-body {
+  .popup:not(.locked-hint) .popup-body {
     padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
   }
 }
@@ -1340,7 +2398,10 @@ button.filter-pill.active:hover .filter-pill-clear {
   inset: 0;
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(8px);
-  z-index: 20;
+  /* Above the app detail panel (z 30) + its toasts (z 40): modals are often
+     launched from inside the detail panel (BecomeBuilderModal via the star's
+     LockedHint, CoverImageEditor), so they must stack in front of it. */
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1463,6 +2524,15 @@ button.filter-pill.active:hover .filter-pill-clear {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 24px;
+}
+
+/* Single-CTA footer (e.g. the handle modal's "Continue" — no Cancel): let the
+   one button span the width instead of hugging the right edge. */
+.modal-actions--single {
+  justify-content: stretch;
+}
+.modal-actions--single .btn {
+  width: 100%;
 }
 
 /* ── App detail panel ─────────────────────────────────── */
@@ -1603,6 +2673,23 @@ button.filter-pill.active:hover .filter-pill-clear {
   letter-spacing: 0.02em;
 }
 
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px; /* takes over the spacing that was on .detail-name */
+}
+
+.detail-title-row .detail-name { margin-bottom: 0; }
+
+@media (max-width: 720px) {
+  .detail-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .detail-name {
   font-family: var(--font-serif);
   font-size: 36px;
@@ -1610,6 +2697,27 @@ button.filter-pill.active:hover .filter-pill-clear {
   letter-spacing: -0.03em;
   line-height: 1.1;
   margin-bottom: 8px;
+}
+
+.detail-author {
+  font-size: 14px;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
+.detail-author-name {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+}
+
+.detail-author-link {
+  text-decoration: none;
+}
+
+.detail-author-link:hover {
+  color: var(--color-text-primary);
+  text-decoration: underline;
 }
 
 .detail-desc {
@@ -1707,6 +2815,50 @@ button.filter-pill.active:hover .filter-pill-clear {
   margin: 0;
 }
 
+/* ── Detail-page star pill ────────────────────────────── */
+
+.detail-star-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.detail-star-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: var(--r-pill);
+  border: none;
+  background: var(--color-accent);      /* white */
+  color: var(--grey-950);               /* dark text + icon (currentColor) */
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.detail-star-btn:hover:not(:disabled) {
+  background: var(--cat-social);        /* blue social hover */
+  box-shadow: 0 0 20px rgba(127, 184, 240, 0.3);
+}
+
+/* Starred (one-way): white bg stays, star turns gold, text stays dark. */
+.detail-star-btn.is-active svg {
+  color: #fbbf24;
+}
+
+.detail-star-btn:disabled {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.detail-star-count {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  opacity: 0.7;
+}
+
 /* ── Visibility toggle ────────────────────────────────── */
 
 .visibility-toggle {
@@ -1736,25 +2888,13 @@ button.filter-pill.active:hover .filter-pill-clear {
 
 .visibility-option.active {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-bg);
 }
 
 .visibility-hint {
   margin-top: 8px;
   font-size: 12px;
   color: var(--color-text-tertiary);
-}
-
-.detail-danger {
-  margin-top: 12px;
-  padding-top: 20px;
-  border-top: 1px solid rgba(255, 60, 60, 0.1);
-}
-
-.detail-delete-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
 }
 
 .detail-readme {
@@ -1851,9 +2991,9 @@ button.filter-pill.active:hover .filter-pill-clear {
 /* ── Buttons ──────────────────────────────────────────── */
 
 .btn {
-  padding: 9px 22px;
+  padding: 12px 22px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   border: none;
@@ -1871,26 +3011,11 @@ button.filter-pill.active:hover .filter-pill-clear {
   box-shadow: 0 0 20px rgba(52, 211, 153, 0.25);
 }
 
-.btn-delete {
-  background: rgba(255, 60, 60, 0.08);
-  color: rgba(255, 100, 100, 0.7);
-  border: 1px solid rgba(255, 60, 60, 0.12);
-}
-
-.btn-delete:hover:not(:disabled) {
-  background: rgba(255, 60, 60, 0.15);
-  color: rgba(255, 100, 100, 0.9);
-}
-
-.btn-delete-confirm {
-  background: rgba(255, 60, 60, 0.25);
-  color: #ff6464;
-  border: 1px solid rgba(255, 60, 60, 0.35);
-}
-
-.btn-delete-confirm:hover:not(:disabled) {
-  background: rgba(255, 60, 60, 0.35);
-  box-shadow: 0 0 20px rgba(255, 60, 60, 0.15);
+/* Blue hover for the Claim (set-username) and Star CTAs — overrides the green
+   hover above for just those buttons. */
+.btn-publish.btn-hover-blue:hover:not(:disabled) {
+  background: var(--cat-social);
+  box-shadow: 0 0 20px rgba(127, 184, 240, 0.3);
 }
 
 .btn:disabled { opacity: 0.35; cursor: not-allowed; }
@@ -2066,6 +3191,17 @@ select.form-input {
   font-size: 15px;
 }
 
+/* The error detail line in SectionBoundary's fallback — the only diagnostic
+   readable on devices without devtools (mobile host). */
+.boundary-error-detail {
+  font-family: var(--font-code, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  word-break: break-word;
+  max-width: 520px;
+  margin: 8px auto 16px;
+}
+
 .spinner {
   display: flex;
   justify-content: center;
@@ -2075,6 +3211,17 @@ select.form-input {
 }
 
 .sentinel { height: 1px; }
+
+/* Slow-first-load hint shown ABOVE the skeleton grid. Calm and centered like
+   .empty/.spinner — it's reassurance, not an error (the error banner handles
+   the hard timeout). */
+.grid-load-hint {
+  text-align: center;
+  padding: 4px 16px 20px;
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+}
 
 /* ── Error banner ─────────────────────────────────────── */
 
@@ -2142,12 +3289,13 @@ select.form-input {
   --pad-card-sm: clamp(22px, 2vw, 32px);
 }
 
-/* Override the legacy centered-hero layout so the tab can stack many sections.
-   The old .hero selector still exists above; it's no longer rendered.
-   z-index: auto defeats the legacy block's z-index:1 so mix-blend-mode on
-   descendants (the island PNG) can reach the .grain-bg backdrop. */
+/* The ONLY .tab-playground block. Deliberately no z-index (and no transform/
+   filter/opacity): the island PNG's mix-blend-mode: lighten composites against
+   the .grain-bg canvas, which only works while no ancestor between the island
+   and the root creates a stacking context. (.app-shell and .app-main keep the
+   same invariant.) */
 .tab-playground {
-  z-index: auto;
+  position: relative;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -2297,9 +3445,12 @@ select.form-input {
 
 /* ── Code snippet ───────────────────────────────────────── */
 
+/* Command line-height drives the first-line box that the leading prompt + copy
+   icon align to (and size to), so a wrapped command keeps them on line 1. */
 .code-snippet {
+  --code-line: calc(16px * 1.5);
   display: flex;
-  align-items: center;
+  align-items: flex-start;     /* pin prompt + copy icon to the first line */
   gap: 10px;
   background: var(--color-surface-sunk);
   border: 1px solid var(--color-border);
@@ -2310,30 +3461,27 @@ select.form-input {
   min-width: 0;
 }
 
+/* Leading `$` — sized to the command line so it sits on the first line. */
 .code-prompt {
   color: var(--color-text-tertiary);
   flex: 0 0 auto;
+  font-size: 16px;
+  line-height: 1.5;
 }
 
-/* Prompt variant: sparkle glyph + wrapping sentence (AI prompt, not a shell command) */
-.code-snippet.is-prompt {
-  align-items: flex-start;
-}
-
+/* Prompt variant: sparkle glyph sized to the command font, centred on the
+   first line (offset derived from the line box — no magic number). */
 .code-prompt-icon {
   color: var(--color-accent);
   flex: 0 0 auto;
-  margin-top: 2px;            /* optically align the 14px glyph with the first text line */
-}
-
-.code-snippet.is-prompt .code-cmd {
-  white-space: normal;
-  word-break: break-word;
+  width: 16px;
+  height: 16px;
+  margin-top: calc((var(--code-line) - 16px) / 2);
 }
 
 .code-cmd {
   flex: 1 1 auto;
-  min-width: 0;            /* allow shrink below content so it scrolls, not blows out the row */
+  min-width: 0;
   width: 100%;
   border: 0;
   background: transparent;
@@ -2341,12 +3489,15 @@ select.form-input {
   margin: 0;
   font-family: var(--font-code);
   font-size: 16px;
+  line-height: 1.5;
   color: var(--color-text-primary);
+  white-space: pre-wrap;       /* wrap long commands instead of clipping/scrolling */
+  overflow-wrap: anywhere;     /* break long URLs/tokens */
 }
 
 .code-cmd:focus { outline: none; }
 
-.flow-step[data-hue="defi"]   .code-cmd { color: var(--cat-defi); }
+.flow-step[data-hue="defi"]   .code-cmd { color: var(--cat-site); }
 .flow-step[data-hue="gaming"] .code-cmd { color: var(--cat-gaming); }
 .flow-step[data-hue="social"] .code-cmd { color: var(--cat-social); }
 .flow-step[data-hue="irl"]    .code-cmd { color: var(--cat-irl); }
@@ -2357,11 +3508,18 @@ select.form-input {
   border: 0;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  padding: 4px 6px;
-  line-height: 0;
+  padding: 0 6px;
+  height: var(--code-line);    /* one text-line tall → icon centres on line 1 */
+  font-size: 16px;
   display: inline-flex;
   align-items: center;
   transition: color 0.12s ease;
+}
+
+/* Icon glyph matches the command font size so it reads as one line of text. */
+.code-copy svg {
+  width: 1em;
+  height: 1em;
 }
 
 .code-copy:hover { color: var(--color-text-primary); }
@@ -2430,7 +3588,7 @@ select.form-input {
 }
 
 .cli-commands .cli-row[data-hue="gaming"]   { --row-hue: var(--cat-gaming); }
-.cli-commands .cli-row[data-hue="defi"]     { --row-hue: var(--cat-defi); }
+.cli-commands .cli-row[data-hue="defi"]     { --row-hue: var(--cat-site); }
 .cli-commands .cli-row[data-hue="personal"] { --row-hue: var(--cat-personal); }
 .cli-commands .cli-row[data-hue="social"]   { --row-hue: var(--cat-social); }
 .cli-commands .cli-row[data-hue="irl"]      { --row-hue: var(--cat-irl); }
@@ -2603,7 +3761,7 @@ select.form-input {
 }
 
 .pitch-art[data-hue="social"]  { background: color-mix(in srgb, var(--cat-social)  22%, var(--color-surface)); }
-.pitch-art[data-hue="defi"]    { background: color-mix(in srgb, var(--cat-defi)    22%, var(--color-surface)); }
+.pitch-art[data-hue="defi"]    { background: color-mix(in srgb, var(--cat-site)    22%, var(--color-surface)); }
 .pitch-art[data-hue="gaming"]  { background: color-mix(in srgb, var(--cat-gaming)  22%, var(--color-surface)); }
 .pitch-art[data-hue="irl"]     { background: color-mix(in srgb, var(--cat-irl)     22%, var(--color-surface)); }
 
@@ -2707,13 +3865,18 @@ select.form-input {
 
 .ucard-cta {
   align-self: center;
-  background: var(--color-text-primary);
+  margin-top: 24px;
+  background: #fff;
   color: var(--color-bg);
   padding: 10px 18px;
+  border: none;
   border-radius: var(--r-pill);
+  font-family: inherit;
   font-weight: 600;
   font-size: 15px;
+  line-height: 1.5;
   text-decoration: none;
+  cursor: pointer;
   transition: transform 0.12s ease, background 0.12s ease;
 }
 
@@ -2723,6 +3886,74 @@ select.form-input {
 }
 
 /* ── Floating island portal ─────────────────────────────── */
+
+/* ── Pre-hero intro ─────────────────────────────────────── */
+/* First-visit-per-device intro. The spacer and the headline overlay are
+   siblings of the island — never wrap it, or its mix-blend-mode breaks. */
+.prehero-spacer {
+  height: 140px;
+}
+
+.tab-playground--intro .row-island {
+  gap: 20px;
+  min-height: 0;
+}
+
+/* Headline overlay aligned to the main column by mirroring the .app-shell grid. */
+.prehero-text {
+  position: fixed;
+  inset: 32px 0 0 0; /* 32px clears the fixed-top ticker, matching .app-shell */
+  margin-inline: auto;
+  max-width: var(--max-w-shell);
+  display: grid;
+  grid-template-columns: 244px minmax(0, 1fr);
+  pointer-events: none; /* never block the island's hotspots through the text */
+}
+
+.prehero-text-col {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 32px;
+  padding: 24px 16px 16px;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: prehero-rise 800ms var(--ease-out-expo) both;
+}
+
+@media (max-width: 820px) {
+  .prehero-text { grid-template-columns: 1fr; }
+  .prehero-text-col { grid-column: 1; }
+}
+
+.prehero-title {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  font-size: clamp(34px, 4.6vw, 60px);
+  color: var(--color-text-primary);
+  margin-top: 24px;
+}
+
+.prehero-title em {
+  display: block;
+  font-family: italic;
+  color: var(--color-text-secondary);
+  margin-top: 0.05em;
+}
+
+@keyframes prehero-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prehero-text-col { animation: none; }
+}
 
 .row-island {
   position: relative;
@@ -2734,12 +3965,16 @@ select.form-input {
   overflow: visible;
   min-height: calc(100vh - 164px);
   gap: 40px;
+  /* The island is interactive chrome, not copy — hotspot drags shouldn't
+     select labels/badges/XP. Quest windows opt back in (user-select: text). */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .island-xp {
   font-family: "Sixtyfour", var(--font-code);
   font-weight: 400;
-  font-size: 48px;
+  font-size: 40px;
   letter-spacing: 0.04em;
   color: var(--cat-social);
   text-align: center;
@@ -2754,7 +3989,7 @@ select.form-input {
   justify-content: center;
   align-items: center;
   margin-top: 8px;
-  color: var(--color-text-tertiary);
+  color: var(--cat-social);
   opacity: 0;
   transform: translateY(-4px);
   transition: opacity 600ms ease, transform 600ms ease;
@@ -2779,7 +4014,7 @@ select.form-input {
 .island-platform {
   position: relative;
   display: inline-block;
-  width: min(560px, 80vw);
+  width: min(560px, 100%);
   padding: 0;
   margin-top: 40px;
   justify-self: center;
@@ -2789,21 +4024,37 @@ select.form-input {
   position: relative;
   display: block;
   width: 100%;
+  /* The ONE blend layer for the island — children must not add their own
+     mix-blend-mode (nested blend groups resolve inconsistently across
+     device compositors). */
   mix-blend-mode: lighten;
+  /* Float via `top`, NOT `transform`/`will-change`. The platform.png has a
+     baked-in black background; `mix-blend-mode: lighten` knocks it out by
+     compositing against the page's dark .grain-bg. A transform/will-change
+     animation promotes this element to its own compositor layer, which on
+     some webviews/GPUs isolates the blend from the grain backdrop — the
+     island then composites against white and renders blank ("island didn't
+     show up"). Animating `top` keeps the element un-promoted so the blend
+     always reaches the grain. Do not switch this back to translateY. */
   animation: island-float 4.6s ease-in-out infinite alternate;
-  will-change: transform;
 }
 
 .island-img {
   display: block;
   width: 100%;
   height: auto;
-  mix-blend-mode: lighten;
+  /* No mix-blend-mode here: the ONE blend layer lives on .island-stage.
+     Setting it on the img too nests a blend group inside the stage's blend
+     group — visually a no-op (it blends against the stage's transparent
+     backdrop) but nested blends resolve inconsistently across device
+     compositors. Keep the blend single-layered. */
   image-rendering: pixelated;
   image-rendering: -moz-crisp-edges;
   transition: opacity 240ms ease;
   user-select: none;
+  -webkit-user-select: none;
   -webkit-user-drag: none;
+  -webkit-touch-callout: none;
 }
 
 .island-img-default { position: relative; opacity: 1; }
@@ -2811,7 +4062,12 @@ select.form-input {
   position: absolute;
   inset: 0;
   opacity: 0;
-  mix-blend-mode: normal;
+  /* Above the completed-hotspot crops (.island-crop sits in the z-index:2
+     hotspot button) so the hover highlight paints on top of the background
+     crop. Stays below badges (3) and labels (4) so those remain readable.
+     pointer-events:none — it's decorative and must not block hotspot hover. */
+  z-index: 3;
+  pointer-events: none;
   animation: island-hover-fade 200ms ease forwards;
 }
 .island-img-hover.is-visible { opacity: 1; }
@@ -2831,12 +4087,40 @@ select.form-input {
   z-index: 2;
   appearance: none;
   -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .island-hotspot:focus-visible {
   outline: 2px dashed var(--cat-social);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* A completed hotspot's altered-island crop. Fills the (W%×H%) button box; the
+   background-size/position are set inline per hotspot (see QuestHotspot) so the
+   crop renders at full stage scale, registered over the region behind it. No
+   mix-blend-mode here — the single lighten layer lives on .island-stage, and this
+   child composites within that one group (its black knocks out against the grain
+   just like the base island). Unset z-index keeps it above the base/hover <img>
+   layers, so completed regions stay lit even while another quest is hovered. */
+.island-crop {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  pointer-events: none;
+}
+
+.island-crop.is-live {
+  animation: island-crop-reveal 360ms cubic-bezier(0.2, 0.7, 0.3, 1.2) both;
+}
+
+@keyframes island-crop-reveal {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .island-label {
@@ -2855,6 +4139,12 @@ select.form-input {
   transition: opacity 160ms ease;
   z-index: 4;
   pointer-events: none;
+}
+
+@media (max-width: 820px) {
+  .island-label {
+    font-size: 10px;
+  }
 }
 
 /* Labels anchor at the badge centre (same top/left as .island-badge).
@@ -2884,6 +4174,23 @@ select.form-input {
   padding: 0 1px 2px 0;
 }
 
+/* Completed quest: white check replaces the step number on the same
+   24px circle (no layout shift). The pop-in plays ONLY when a quest
+   completes live this session (.is-complete-live) — snapshot-seeded
+   checks mount silently. */
+.island-badge.is-complete {
+  color: var(--color-bg);
+}
+
+.island-badge.is-complete-live {
+  animation: island-badge-pop 360ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+@keyframes island-badge-pop {
+  0%   { transform: translate(-50%, -50%) scale(0.6); opacity: 0.4; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
 .island-preload {
   position: absolute;
   width: 1px;
@@ -2896,8 +4203,8 @@ select.form-input {
 .island-preload img { width: 1px; height: 1px; }
 
 @keyframes island-float {
-  from { transform: translateY(0); }
-  to   { transform: translateY(-12px); }
+  from { top: 0; }
+  to   { top: -12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2905,6 +4212,7 @@ select.form-input {
   .island-img,
   .island-badge { transition: none; }
   .island-img-hover { animation: none; }
+  .island-badge.is-complete-live { animation: none; }
 }
 
 /* ── Draggable quest window (portaled to document.body) ──── */
@@ -2976,8 +4284,8 @@ select.form-input {
   color: var(--quest-accent);
 }
 
-.quest-window-info,
 .quest-window-close {
+  position: relative;
   flex-shrink: 0;
   width: 30px;
   height: 30px;
@@ -2994,7 +4302,14 @@ select.form-input {
   transition: background 140ms ease, color 140ms ease;
 }
 
-.quest-window-info:hover,
+/* Invisible ~44px touch target — overhangs the visual box so near-miss
+   taps still land on the button instead of the draggable header. */
+.quest-window-close::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+}
+
 .quest-window-close:hover {
   background: var(--color-border);
   color: var(--color-text-primary);
@@ -3012,11 +4327,66 @@ select.form-input {
 .quest-window-body .ucard-title { margin: 0; }
 .quest-window-body .ucard-sub   { margin: 0; }
 
+/* ── Mobile: quest windows become bottom-sheet drawers ──── */
+/* Backdrop covers the island hotspots so a second quest can't open behind
+   the sheet; tapping it closes the (corresponding) window. Mirrors the
+   existing .drawer pattern (overlayIn + drawerUp keyframes). */
+
+@media (max-width: 820px) {
+  .quest-drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 1000; /* over island hotspots + the fixed bottom rail (z 2) */
+    display: flex;
+    align-items: flex-end;
+    animation: overlayIn 0.25s ease both;
+    padding: 8px;
+    /* iOS Safari only dispatches `click` on tap for elements that look
+       interactive — without this the backdrop tap never fires onClose. */
+    cursor: pointer;
+  }
+
+  .quest-window--drawer {
+    position: relative; /* override base `fixed`; sit in the overlay flex-end */
+    left: auto;
+    top: auto;
+    width: 100%;
+    border-radius: 24px;
+    box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.55);
+    padding-bottom: env(safe-area-inset-bottom);
+    animation: drawerUp 0.3s var(--ease-out-expo) both; /* replaces -pop */
+  }
+
+  /* Sheet grab-handle pill — replaces the left drag-grip (no drag on mobile). */
+  .quest-window--drawer::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--color-text-tertiary);
+    opacity: 0.5;
+  }
+
+  .quest-window--drawer .quest-window-head {
+    cursor: default;
+    padding-top: 18px;
+  }
+
+  .quest-window--drawer .quest-window-grip {
+    display: none;
+  }
+}
+
 /* ── Site footer (cat cloud only — pages column excluded) ── */
 
 .site-footer {
-  padding: 48px 0 40px;
-  border-top: 1px solid var(--color-border);
+  padding: 64px 0 40px;
+  border-top: 1px solid var(--color-border-strong);
 }
 
 .footer-inner {
@@ -3032,7 +4402,7 @@ select.form-input {
   .footer-inner { grid-template-columns: 1fr; gap: 32px; }
   .footer-col-meta {
     order: -1;
-    padding: 0 var(--pad-card);
+    padding: 0 var(--pad-card-sm);
   }
 }
 
@@ -3045,6 +4415,24 @@ select.form-input {
 .footer-meta {
   font: 400 12px/1.4 var(--font-code);
   color: var(--color-text-tertiary);
+}
+
+.footer-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.footer-link {
+  font: 400 13px/1.3 var(--font-code);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  width: fit-content;
+  transition: color 0.12s ease;
+}
+
+.footer-link:hover {
+  color: var(--color-accent);
 }
 
 .cat-cloud {
@@ -3086,12 +4474,13 @@ select.form-input {
 
 /* Per-category fill — same pattern as .filter-pill[data-tag=...] above:
    each chip carries its own --cat-color, the hover rule reads it. */
-.cat-chip[data-cat="Games"]    { --cat-color: var(--cat-gaming);   }
-.cat-chip[data-cat="DeFi"]     { --cat-color: var(--cat-defi);     }
-.cat-chip[data-cat="Personal"] { --cat-color: var(--cat-personal); }
-.cat-chip[data-cat="Social"]   { --cat-color: var(--cat-social);   }
-.cat-chip[data-cat="IRL"]      { --cat-color: var(--cat-irl);      }
-.cat-chip[data-cat="Art"]      { --cat-color: var(--cat-art);      }
+.cat-chip[data-cat="social"]      { --cat-color: var(--cat-social);      }
+.cat-chip[data-cat="chat"]        { --cat-color: var(--cat-chat);        }
+.cat-chip[data-cat="site"]        { --cat-color: var(--cat-site);        }
+.cat-chip[data-cat="utility"]     { --cat-color: var(--cat-utility);     }
+.cat-chip[data-cat="gaming"]      { --cat-color: var(--cat-gaming);      }
+.cat-chip[data-cat="marketplace"] { --cat-color: var(--cat-marketplace); }
+.cat-chip[data-cat="irl"]         { --cat-color: var(--cat-irl);         }
 
 .cat-cloud .cat-chip[data-cat]:hover {
   background: var(--cat-color);
@@ -3103,6 +4492,66 @@ select.form-input {
   pointer-events: none;
   user-select: none;
   opacity: 0.25;
+}
+
+/* Bottom-of-list "back to top" band (Apps, Leaderboard). Button borrows the
+   footer cat-cloud typeface so it reads as page chrome. */
+.back-to-top {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 56px 16px 8px;
+  text-align: center;
+}
+
+.back-to-top-note {
+  margin: 0;
+  font: 400 13px/1.4 var(--font-code);
+  color: var(--color-text-tertiary);
+}
+
+.back-to-top-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+.back-to-top-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-code);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.back-to-top-btn:hover {
+  background: var(--color-text-primary);
+  border-color: transparent;
+  color: var(--color-bg);
+}
+
+.back-to-top-btn svg {
+  transition: transform 0.14s ease;
+}
+
+.back-to-top-btn:hover svg {
+  transform: translateY(-2px);
+}
+
+/* In leaderboard fullscreen the rails/ticker are hidden — drop the band too. */
+body.is-leader-fullscreen .back-to-top {
+  display: none;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -3396,6 +4845,8 @@ select.form-input {
   font-family: var(--font-code);
   overflow: hidden;
   pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .event-ticker-lede {
@@ -3518,6 +4969,13 @@ select.form-input {
   letter-spacing: 0.01em;
 }
 
+/* Active leaderboard countdown ("decided in N …!") — black text on the urgent
+   coral pill (see .event-ticker-item--urgent). The static close-time memo and
+   post-deadline message keep the default colour. */
+.event-ticker-title-countdown {
+  color: #000;
+}
+
 .event-ticker-title-link {
   color: inherit;
   text-decoration: none;
@@ -3531,7 +4989,7 @@ select.form-input {
 
 /* Icon tinting by category + tone — matches the cat-hue palette so the
    ticker reads as a continuation of the registry grid. */
-.event-ticker-item[data-category="social"]     .event-ticker-icon { color: var(--cat-defi); }
+.event-ticker-item[data-category="social"]     .event-ticker-icon { color: var(--cat-site); }
 .event-ticker-item[data-category="app"]        .event-ticker-icon { color: var(--color-accent); }
 .event-ticker-item[data-category="points"]     .event-ticker-icon { color: var(--cat-utility); }
 .event-ticker-item[data-category="leaderboard"].event-ticker-icon,
@@ -3542,6 +5000,19 @@ select.form-input {
 
 .event-ticker-item[data-tone="warning"]  .event-ticker-icon,
 .event-ticker-item[data-tone="negative"] .event-ticker-icon { color: #f5a06b; }
+
+/* Urgent ("live") leaderboard countdown — a coral pill that holds its colour on
+   hover too (the :hover selector beats .event-ticker-item-link:hover). The icon
+   rule carries the [data-category="leaderboard"] qualifier + sits after the
+   category block so it wins the (0,3,0) specificity tie against the generic
+   leaderboard-icon rule. */
+.event-ticker-item--urgent,
+.event-ticker-item-link.event-ticker-item--urgent:hover {
+  background: #ff5c64;
+}
+.event-ticker-item--urgent[data-category="leaderboard"] .event-ticker-icon {
+  color: #9307df;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .event-ticker-pulse {
@@ -3573,13 +5044,20 @@ select.form-input {
   gap: 40px;
   align-items: start;
   width: 100%;
+  /* Pull the opaque first card (.xp-prizes-card) up so it rides over the
+     island's lower edge as the island reaches the top — approximating "the
+     content card overflows the island." z-index/position live on this layout
+     (a SIBLING of .row-island), so the island's ancestor chain stays clean and
+     its mix-blend-mode against .grain-bg is untouched. Tune the negative top. */
+  position: relative;
+  z-index: 1;
 }
 
 .playground-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 40px;
 }
 
 @media (max-width: 1024px) {
@@ -3589,6 +5067,70 @@ select.form-input {
   }
   .playground-toc-rail {
     display: none;
+  }
+}
+
+/* Divider between phone-doable and computer-only quests — only meaningful once
+   the journey is reordered on mobile, so it's hidden on desktop. */
+.journey-computer-break {
+  display: none;
+}
+
+/* On a phone, lead with the quests that can actually be done there (username,
+   .dot site, stars) and push the computer-only ones (game tutorial, modding)
+   below a divider — those quests' Mobile tab explains a computer is needed. The
+   "Where next" wrap-up stays last, as on desktop. `.playground-main` is already
+   a flex column, so `order` reorders the sections visually; the XP/Prizes intro
+   and "Earn XP" heading keep order 0 and stay on top. The reorder is visual-only
+   (DOM/tab order is unchanged), which is fine for this reading-order nudge. */
+@media (max-width: 820px) {
+  .playground-main > #username {
+    order: 1;
+  }
+  .playground-main > #dot-site {
+    order: 2;
+  }
+  /* "Get your app modded" is share-and-socialise — fully doable from a phone,
+     so it stays above the divider with the other phone quests. */
+  .playground-main > #get-modded {
+    order: 3;
+  }
+  .playground-main > #stars {
+    order: 4;
+  }
+  .playground-main > .journey-computer-break {
+    order: 5;
+  }
+  .playground-main > #tutorial {
+    order: 6;
+  }
+  .playground-main > #mod {
+    order: 7;
+  }
+  /* "Where next" is the journey's wrap-up — keep it last, below the
+     computer-only quests, just like on desktop. */
+  .playground-main > #where-next {
+    order: 8;
+  }
+
+  /* Ruled "you'll need your computer" separator. */
+  .journey-computer-break {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 4px 0;
+    color: var(--color-text-tertiary);
+    font: 500 12px/1.3 var(--font-code);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+  .journey-computer-break::before,
+  .journey-computer-break::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--color-border-strong);
   }
 }
 
@@ -3736,6 +5278,37 @@ select.form-input {
   margin: 0;
 }
 
+/* The whole header row toggles the fold. Reset the button to look like the
+   bare heading, with the caret pinned to the right. */
+.xp-prizes-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+
+.xp-prizes-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+/* Match the card's flex gap so a folded card reads head-only. */
+.xp-prizes .journey-section-body.is-collapsed {
+  margin-top: -32px;
+}
+
+.xp-prizes-body-inner {
+  gap: 32px;
+}
+
 .xp-prizes-lede {
   font-size: clamp(17px, 1.6vw, 20px);
   line-height: 1.45;
@@ -3880,6 +5453,10 @@ select.form-input {
     flex-direction: column;
     gap: 2px;
   }
+  .prize-award {
+    text-align: left;
+    width: 100%;
+  }
 }
 
 /* Journey step sections */
@@ -3913,18 +5490,116 @@ select.form-input {
 
 .journey-section-head {
   display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+/* Title + XP rewards flow on one line (baseline-aligned) and wrap only when
+   they genuinely overflow; the caret stays pinned right of the title line. */
+.journey-section-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 24px 16px;
+  align-items: baseline;
+  gap: 8px 14px;
 }
 
 .journey-section-title {
   margin: 0;
-  font: 26px var(--font-serif);
+  font: 32px var(--font-serif);
   color: var(--color-text-primary);
 }
 
+/* The collapse toggle — same treatment as the quest-window close button. */
+.journey-caret {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  margin-top: 4px; /* optically centres on the 32px title line */
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+/* A folded card opens on a click anywhere; whole-card hover previews what
+   the click does by lighting the caret with its own hover treatment. */
+.journey-caret:hover,
+.journey-section.is-folded:hover .journey-caret {
+  background: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.journey-caret:focus-visible {
+  outline: 2px dashed var(--journey-hue, var(--color-text-tertiary));
+  outline-offset: 2px;
+}
+
+.journey-section.is-folded {
+  cursor: pointer;
+}
+
+/* Completed-task chip beside the title — quest-hued circle, white check. */
+.journey-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 12px;
+  border-radius: 50%;
+  background: var(--journey-hue, var(--color-text-secondary));
+  color: var(--color-bg);
+  vertical-align: 3px;
+}
+
+.journey-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+  transition: transform 240ms ease;
+}
+
+.journey-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+/* Body fold: grid-rows 1fr→0fr (no JS measurement). The negative margin
+   swallows the section's 28px flex gap so a folded card reads head-only. */
+.journey-section-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 280ms ease, margin-top 280ms ease;
+}
+
+.journey-section-body.is-collapsed {
+  grid-template-rows: 0fr;
+  margin-top: -28px;
+}
+
+.journey-section-body-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .journey-section-body { transition: none; }
+  .journey-chevron { transition: none; }
+}
+
 .journey-section-rewards {
+  /* Always drop to its own line below the title — without this, short titles
+     (e.g. "Mod an app", "Set username") leave room for the reward to sit
+     inline while longer titles wrap it, which reads inconsistently. */
+  flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -3956,15 +5631,40 @@ select.form-input {
   align-self: flex-start;
 }
 
-.journey-shared-note {
-  margin: 0;
-  padding: 12px 14px;
-  border-left: 2px solid var(--color-border-strong);
-  border-radius: 0 6px 6px 0;
-  background: var(--color-surface-secondary);
-  line-height: 1.55;
-  color: var(--color-text-secondary);
-  margin-bottom: 24px;
+/* Primary + optional secondary CTA share a row, wrapping on narrow widths. */
+.journey-cta-row {
+  align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.journey-cta-row .journey-cta {
+  align-self: auto;
+}
+/* The secondary reads as a quieter sibling to the filled primary —
+   matched to the primary's font size (14px, vs .btn-ghost's 16px) and its
+   pill shape, with only a barely-visible hue tint surfacing on hover. */
+.journey-cta--secondary {
+  font-size: 14px;
+  padding: 8px 14px;
+  /* Transparent 1px border matches the primary's border box so the two pills
+     are the same size with identical padding (.btn-ghost zeroes the border). */
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  color: color-mix(in srgb, var(--journey-hue, var(--cat-social)) 78%, var(--color-text-primary));
+}
+.journey-cta--secondary:hover {
+  background: color-mix(in srgb, var(--journey-hue, var(--cat-social)) 10%, transparent);
+  color: var(--journey-hue, var(--cat-social));
+}
+
+/* Intro line above an instruction tab's steps — reads as normal body text
+   (same colour/size as the bullets), just with spacing before the list. */
+.journey-tab-intro {
+  margin: 0 0 24px;
+  line-height: 1.6;
+  max-width: 72ch;
 }
 
 .journey-note {
@@ -3974,8 +5674,8 @@ select.form-input {
 .journey-warning {
   margin: 12px 0 0;
   padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--cat-defi) 35%, transparent);
-  background: color-mix(in srgb, var(--cat-defi) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cat-site) 35%, transparent);
+  background: color-mix(in srgb, var(--cat-site) 10%, transparent);
   border-radius: 6px;
   font-size: 13px;
   line-height: 1.55;
@@ -4060,7 +5760,11 @@ select.form-input {
   font-size: 14px;
   list-style: none;
   user-select: none;
-  opacity: 0.8;
+  /* Tint with the section's quest hue (set as --journey-hue by JourneySection);
+     falls back to the inherited text colour when used outside one. The chevron
+     is a currentColor SVG, so it picks this up too. */
+  color: var(--journey-hue, currentColor);
+  opacity: 0.85;
 }
 
 .cli-install-toggle::-webkit-details-marker {
@@ -4088,6 +5792,36 @@ select.form-input {
   gap: 12px;
 }
 
+/* Once "I've set up the CLI" is ticked, every instance shrinks to a slim,
+   muted acknowledgement (still re-openable to revert). */
+.cli-install.is-ready {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+}
+.cli-install.is-ready .cli-install-toggle {
+  opacity: 0.6;
+}
+.cli-install-tick {
+  flex: none;
+  color: #34d399;
+}
+.cli-install-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.cli-install-done input {
+  width: 16px;
+  height: 16px;
+  accent-color: #34d399;
+  cursor: pointer;
+}
+
 .journey-link {
   color: var(--cat-social);
   text-decoration: none;
@@ -4097,7 +5831,35 @@ select.form-input {
   text-decoration: underline;
 }
 
-/* Instruction tabs (Playground CLI / No Code) — folder tabs on a boxed body.
+/* "Laptop required" flag — pill marking RevX/CLI instructions, plus the
+   mobile-only "go to your laptop" line. Sits above the instruction tabs on
+   the tutorial + mod journey cards and inside the island quest windows. */
+
+.laptop-flag {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.laptop-badge {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.laptop-notice {
+  font-size: 14px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+/* Quest windows are compact — tuck the pill closer to the title/content. */
+.quest-window-body .laptop-flag {
+  margin-bottom: 0;
+}
+
+/* Instruction tabs (Desktop / Web / Mobile) — folder tabs on a boxed body.
    The active tab shares the box surface and dissolves its bottom edge into it,
    so tab + panel read as one physical folder. */
 
@@ -4116,9 +5878,8 @@ select.form-input {
 .instr-tab {
   position: relative;
   display: inline-flex;
-  align-items: center;
   gap: 8px;
-  padding: 16px 29px;
+  padding: 16px 24px;
   margin-bottom: -1px;
   border: 1px solid var(--color-border);
   border-bottom-color: transparent;
@@ -4126,11 +5887,12 @@ select.form-input {
   background: transparent;
   color: var(--color-text-secondary);
   font: 400 19px var(--font-sans);
+  text-align: left;
   cursor: pointer;
   transition: color 120ms ease, background-color 120ms ease;
 }
 
-.instr-tab:hover:not(:disabled):not(.is-active) {
+.instr-tab:hover:not(.is-active) {
   color: var(--color-text-primary);
 }
 
@@ -4138,12 +5900,6 @@ select.form-input {
   z-index: 2;
   background: #1f1f1f;
   color: var(--color-text-primary);
-}
-
-.instr-tab:disabled {
-  cursor: not-allowed;
-  color: var(--color-text-tertiary);
-  opacity: 0.6;
 }
 
 .instr-box {
@@ -4160,14 +5916,38 @@ select.form-input {
   margin-top: 0;
 }
 
-.instr-tab-soon {
-  font-family: var(--font-code);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--color-border-strong);
+/* Mobile-tab content for steps with no phone path. */
+.instr-computer-needed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+}
+
+.instr-computer-needed svg {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .instr-tab {
+    padding: 12px 16px;
+    font-size: 16px;
+  }
+}
+
+/* Three tabs are tight on a phone — drop the icons and shrink the chrome so
+   the Desktop / Web / Mobile labels always fit on one row. */
+@media (max-width: 460px) {
+  .instr-tab {
+    padding: 10px 12px;
+    font-size: 14px;
+    gap: 6px;
+  }
+  .instr-tab svg {
+    display: none;
+  }
 }
 
 /* Leaderboard → XP & Prizes link */
@@ -4182,4 +5962,341 @@ select.form-input {
 
 .leaderboard-xp-link:hover {
   text-decoration: underline;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Onboarding — "Become a builder"
+   The resources+handle modal, the Apps-page banner, the locked-quest nudge,
+   and the journey card's locked / active-quest states.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── Become-a-builder modal ──────────────────────────────
+   Same shell as the handle modal: left-aligned head, larger title. The
+   resources step adds an intro, a hue-checked bullet list, and a full-width
+   CTA that carries its own approval / cancelled notes beneath it. */
+.modal--onboarding {
+  padding-top: 20px;
+  --journey-hue: #4ba3ff; /* QUEST_COLORS.character — tints the bullet checks */
+}
+.modal--onboarding .modal-head-title {
+  text-align: left;
+  margin: 0;
+  font-size: 32px;
+}
+.modal--onboarding .modal-head-xp--ghost {
+  display: none;
+}
+.modal--onboarding .modal-lead {
+  margin: 0 0 20px;
+  color: var(--color-text-secondary);
+}
+
+.onboarding-bullets-intro {
+  margin: 0 0 12px;
+  font: 500 11px/1.4 var(--font-code);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.onboarding-bullets {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.onboarding-bullets li {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--color-text-primary);
+}
+.onboarding-bullets li svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--journey-hue, var(--cat-social));
+}
+
+/* Stack the CTA and its notes (approve-on-phone, cancelled) in one column. */
+.modal--onboarding .modal-actions--single {
+  flex-direction: column;
+  align-items: stretch;
+}
+.onboarding-cta {
+  width: 100%;
+}
+.onboarding-cta[aria-busy="true"] {
+  /* Reuse the optimistic / pending opacity pulse used for unconfirmed UI. */
+  animation: tab-name-pulse 1.4s ease-in-out infinite;
+}
+.onboarding-approve-note {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--cat-social);
+}
+.onboarding-cancelled {
+  margin: 10px 0 0;
+  text-align: center;
+  font: 500 11px/1.4 var(--font-code);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cat-site);
+}
+
+/* ── Apps-page banner ────────────────────────────────────
+   Resembles a journey card; spans both columns of the .tab-apps grid and runs
+   the full width above the grid and rail. Hue-tinted, single arrow CTA. */
+.become-builder-card {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  width: 100%;
+  text-align: left;
+  padding: clamp(18px, 2vw, 24px) clamp(20px, 2.4vw, 28px);
+  margin-bottom: 8px;
+  border: 1px solid
+    color-mix(in srgb, var(--journey-hue, var(--cat-social)) 40%, var(--color-border-strong));
+  border-radius: var(--r-card);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--journey-hue, var(--cat-social)) 14%, var(--color-surface)),
+    var(--color-surface) 70%
+  );
+  cursor: pointer;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+.become-builder-card:hover {
+  border-color: color-mix(in srgb, var(--journey-hue, var(--cat-social)) 70%, transparent);
+  transform: translateY(-1px);
+}
+.become-builder-card-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.become-builder-card-title {
+  font: 400 24px var(--font-serif);
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+}
+.become-builder-card-sub {
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+.become-builder-card-arrow {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: var(--color-bg);
+  background: var(--journey-hue, var(--cat-social));
+  transition: transform 160ms ease;
+}
+.become-builder-card:hover .become-builder-card-arrow {
+  transform: translateX(2px);
+}
+
+/* ── Journey card: active-quest state ────────────────────── */
+
+/* Active, actionable, not-yet-complete quest: a soft hue wash + an accent edge
+   so the live step reads warmer than the neutral cards around it. */
+.journey-section.is-active-quest {
+  border-left: 3px solid var(--journey-hue, var(--cat-social));
+  background: linear-gradient(
+    100deg,
+    color-mix(in srgb, var(--journey-hue, var(--cat-social)) 9%, var(--color-surface)),
+    var(--color-surface) 60%
+  );
+}
+
+/* ── Locked nudge popover ────────────────────────────────
+   Reuses .popup; tinted with the inherited --journey-hue. The star button
+   wraps in a relative span so it can host this the same way. */
+.bar-btn-fav-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.locked-hint {
+  min-width: 220px;
+  max-width: 280px;
+  /* Portaled to <body> (see LockedHint.tsx), so it no longer rides the
+     `.app-post:has(.popup)` lift — it clears cards, the sticky right rail, and
+     the event ticker on its own. (The nudge is dismissed before the
+     Become-a-builder modal opens, so there's no contest with that overlay.) */
+  z-index: 60;
+  border-color: color-mix(in srgb, var(--journey-hue, var(--cat-social)) 45%, var(--color-border-strong));
+}
+.locked-hint .popup-body p {
+  color: var(--color-text-primary);
+}
+/* White by default (inherits .popup-cta), blue on hover — matches the
+   btn-hover-blue convention used by the handle modal's Continue button. */
+.locked-hint-cta {
+  align-self: flex-start;
+  border: none;
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+.locked-hint-cta:hover {
+  background: var(--cat-social);
+  box-shadow: 0 0 20px rgba(127, 184, 240, 0.3);
+}
+
+/* ── XP celebration overlay ─────────────────────────────────────────────
+   Portaled to <body>, so these are GLOBAL selectors (not .builder-root
+   scoped) and can't lean on the builder theme vars. Pixel-art styling to
+   match the site's vinyl-crate / 8-bit aesthetic: chunky hard-edged sprites,
+   stepped motion, the `--font-pixel` face, and blocky no-blur shadows. */
+/* Full-viewport backdrop: catches the dismiss click anywhere on screen
+   (pointer-events: auto) and swallows it so it doesn't fall through to a
+   button underneath. Transparent — it doesn't dim, just breaks the panel. */
+.xp-celebration {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+    pointer-events: auto;
+}
+/* The stage is sized/positioned to the builder canvas (inline top/left/
+   width/height from the measured rect) so the card centers on the builder
+   window, not the viewport. Pointer-events off so the dismiss click reaches
+   the backdrop above. */
+.xp-celebration-stage {
+    position: fixed;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+.xp-celebration-burst {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 0;
+    height: 0;
+}
+.xp-confetti {
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: 0; /* hard pixel edges */
+    opacity: 0;
+    /* Inset shading reads as a beveled pixel block; no blur anywhere. */
+    box-shadow: inset -3px -3px 0 0 rgba(0, 0, 0, 0.28);
+    image-rendering: pixelated;
+    transform: translate(-50%, -50%);
+    /* steps() makes the flight chunky/jumpy — retro, not smooth. */
+    animation: xp-confetti-fly 1.7s steps(14) forwards;
+    animation-delay: var(--delay, 0ms);
+}
+@keyframes xp-confetti-fly {
+    0% {
+        opacity: 0;
+        transform: translate(-50%, -50%) rotate(0deg);
+    }
+    10% {
+        opacity: 1;
+    }
+    78% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0;
+        transform: translate(
+                calc(-50% + var(--dx)),
+                calc(-50% + var(--dy) + 220px)
+            )
+            rotate(var(--rot));
+    }
+}
+.xp-celebration-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 22px 30px;
+    background: #150d15;
+    border: 3px solid #e6007a; /* hard pixel-window border */
+    border-radius: 0;
+    box-shadow: 8px 8px 0 0 rgba(0, 0, 0, 0.55); /* blocky offset, no blur */
+    image-rendering: pixelated;
+    /* Pop in (transform), then flash 3× by inverting the whole card's
+       palette and back (filter) — hard step-end cuts, no blur, arcade-style.
+       Two independent properties so the animations don't fight. */
+    animation:
+        xp-card-pop 0.45s steps(6) forwards,
+        xp-card-flash 0.42s step-end 0.45s 3;
+}
+@keyframes xp-card-flash {
+    0%,
+    49% {
+        filter: invert(0);
+    }
+    50%,
+    99% {
+        filter: invert(1);
+    }
+    100% {
+        filter: invert(0);
+    }
+}
+@keyframes xp-card-pop {
+    0% {
+        opacity: 0;
+        transform: scale(0.5);
+    }
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+.xp-celebration-icon {
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    color: #fff;
+    background: #e6007a;
+    border-radius: 0;
+    box-shadow: 4px 4px 0 0 rgba(0, 0, 0, 0.45);
+    animation: xp-icon-bob 0.6s steps(4) 0.2s 3;
+}
+@keyframes xp-icon-bob {
+    50% {
+        transform: translateY(-5px) rotate(-6deg);
+    }
+}
+.xp-celebration-amount {
+    margin: 0;
+    font-family: var(--font-pixel, ui-monospace, monospace);
+    font-size: clamp(26px, 8vw, 38px);
+    line-height: 1.1;
+    color: #fff;
+    /* Hard pixel drop-shadow in brand pink. */
+    text-shadow: 3px 3px 0 #e6007a;
+    letter-spacing: 0.04em;
+}
+.xp-celebration-label {
+    margin: 0;
+    font-family: var(--font-pixel, ui-monospace, monospace);
+    font-size: clamp(9px, 3vw, 12px);
+    color: #56f39a;
+    letter-spacing: 0.06em;
+}
+@media (prefers-reduced-motion: reduce) {
+    .xp-celebration-card,
+    .xp-celebration-icon {
+        animation: none;
+    }
 }

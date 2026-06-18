@@ -50,8 +50,8 @@ const CLI_ROWS: CliRow[] = [
     action: { kind: "copy", label: "Install CLI ↵" },
   },
   {
-    id: "init",
-    cmd: `${CLI_COMMAND} init`,
+    id: "login",
+    cmd: `${CLI_COMMAND} login`,
     desc: "Set up your toolchain, phone signing, and funded testnet account.",
     hue: "gaming",
   },
@@ -160,7 +160,7 @@ export default function AboutTab() {
               not the funnel.
             </h3>
             <p className="pitch-lead">
-              Your app opens inside the <strong>Polkadot App</strong> — where the
+              Your app opens inside the <strong>Polkadot App</strong>, where the
               people already are.
             </p>
           </div>
@@ -196,7 +196,7 @@ export default function AboutTab() {
               Frontend and domain on{" "}
               <a
                 className="pitch-link"
-                href="https://docs.polkadot.com/"
+                href="https://docs.polkadot.com/apps"
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={handleExternalClick}
@@ -243,7 +243,7 @@ function FlowRow() {
     {
       num: "02",
       title: "Login with Polkadot App",
-      cmd: `${CLI_COMMAND} init`,
+      cmd: `${CLI_COMMAND} login`,
       hue: "gaming",
     },
     {

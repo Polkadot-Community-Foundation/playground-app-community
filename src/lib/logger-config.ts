@@ -47,11 +47,27 @@ function isLibraryUserRejection(namespace: string, data: unknown): boolean {
   return isSigningRejection(new Error(err));
 }
 
+// The host signer logs these at `error` on every cold auto-connect (the
+// module-load `signerManager.connect()` races the host handshake). Demote to
+// `warn` so they stay queryable as warnings + breadcrumbs but drop out of the
+// error stream and don't trip error alerts. Mirrors the `tx` user-rejection
+// demotion above.
+const EXPECTED_SIGNER_HOST_NOISE = new Set([
+  "failed to get product account",
+  "failed to get accounts from host",
+  "host returned no accounts",
+]);
+function isExpectedSignerHostNoise(namespace: string, message: string): boolean {
+  return namespace === "signer:host" && EXPECTED_SIGNER_HOST_NOISE.has(message);
+}
+
 configure({
   handler: ({ level, namespace, message, data }) => {
     const effective: LogLevel = isLibraryUserRejection(namespace, data)
       ? "debug"
-      : level;
+      : isExpectedSignerHostNoise(namespace, message) && level === "error"
+        ? "warn"
+        : level;
     const isLoud = effective === "error" || effective === "warn";
 
     const prefix = `[${namespace}]`;
@@ -74,11 +90,31 @@ configure({
     // captureException already record those, so capturing here would
     // duplicate every tx failure into Sentry.
     if (isLoud && namespace !== "tx") {
-      Sentry.captureMessage(`[${namespace}] ${message}`, {
+      // The SDK attaches the underlying failure as `data.cause`. When it's a
+      // real Error, capture IT as the exception so Sentry records a stacktrace,
+      // groups the issue by the actual failure (host-rejected vs derive vs
+      // disconnected), and Seer can analyse it — instead of collapsing every
+      // reason under one static `captureMessage` string. The cause message is
+      // also lifted into an indexed tag so the root-cause distribution is
+      // filterable/aggregatable in search (`extra` is neither). Truncated to
+      // stay under Sentry's 200-char tag limit.
+      const cause = (data as { cause?: unknown } | undefined)?.cause;
+      const ctx = {
         level: SENTRY_LEVEL[effective],
         extra: data as Record<string, unknown> | undefined,
-        tags: { source: "polkadot-apps", namespace },
-      });
+        tags: {
+          source: "polkadot-apps",
+          namespace,
+          ...(cause instanceof Error
+            ? { cause: cause.message.slice(0, 200) }
+            : {}),
+        },
+      };
+      if (cause instanceof Error) {
+        Sentry.captureException(cause, ctx);
+      } else {
+        Sentry.captureMessage(`[${namespace}] ${message}`, ctx);
+      }
     }
   },
 });

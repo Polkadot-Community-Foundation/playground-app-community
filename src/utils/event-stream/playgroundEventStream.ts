@@ -21,11 +21,13 @@ import {
 } from "./eventStream";
 import { createRegistryHighlightsEventStreamSource } from "./registryHighlightsEventStreamSource";
 import { createRegistryEventStreamSource } from "./registryEventStreamSource";
+import { createLeaderboardCountdownEventStreamSource } from "./leaderboardCountdownEventStreamSource";
 
 export const playgroundEventStream = new EventStreamStore({ maxItems: 300 });
 
 playgroundEventStream.registerSource(createRegistryEventStreamSource());
 playgroundEventStream.registerSource(createRegistryHighlightsEventStreamSource());
+playgroundEventStream.registerSource(createLeaderboardCountdownEventStreamSource());
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {

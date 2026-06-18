@@ -14,18 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from "react";
+import { Link } from "react-router-dom";
 import * as Sentry from "@sentry/react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import type { SignerState } from "@parity/product-sdk-signer";
 import { VISIBILITY_PRIVATE, VISIBILITY_PUBLIC, buildAppShareUrl, type AppEntry, type AppDetails } from "./App.tsx";
 import { REVX_URL, CLI_COMMAND } from "./config.ts";
-import { placeholderFor, useIconUrl } from "./utils";
+import { cardColorForDomain, useIconUrl, displayNameForAccount } from "./utils";
+import { useRootUsername } from "./utils/identity";
 import { handleExternalClick } from "./utils/externalNavigation";
 import { StarIcon, PinIcon, CopyIcon, CheckIcon } from "./icons.tsx";
 import ErrorBanner from "./ErrorBanner.tsx";
+import LockedHint from "./LockedHint.tsx";
+import { useOnboarding } from "./OnboardingProvider";
 import CoverImageEditor from "./CoverImageEditor.tsx";
+import LaunchButton from "./LaunchButton.tsx";
 import { journeyTracker, addUserActionBreadcrumb, isSigningRejection } from "./lib/telemetry";
 
 interface AppDetailPanelProps {
@@ -37,11 +42,8 @@ interface AppDetailPanelProps {
   /** Check whether the current viewer has starred this app. */
   fetchHasStarred: (domain: string, voter: string) => Promise<boolean>;
   onClose: () => void;
-  /** Star this app (+1 point to the owner). */
+  /** Star this app permanently. */
   onStar: (domain: string) => Promise<void>;
-  /** Unstar this app (-1 point from the owner). */
-  onUnstar: (domain: string) => Promise<void>;
-  onDelete: (domain: string) => Promise<void>;
   onTogglePin?: (domain: string, pinned: boolean) => Promise<void>;
   onSetVisibility?: (domain: string, visibility: number) => Promise<void>;
   onSelectApp?: (domain: string) => Promise<boolean>;
@@ -49,20 +51,32 @@ interface AppDetailPanelProps {
   onUpdateCoverImage?: (domain: string, bytes: Uint8Array) => Promise<void>;
 }
 
-export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinned, fetchHasStarred, onClose, onStar, onUnstar, onDelete, onTogglePin, onSetVisibility, onSelectApp, onUpdateCoverImage }: AppDetailPanelProps) {
+export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinned, fetchHasStarred, onClose, onStar, onTogglePin, onSetVisibility, onSelectApp, onUpdateCoverImage }: AppDetailPanelProps) {
   // --- State ---
-  const [copied, setCopied] = useState<"mod" | "repo" | "link" | null>(null);
+  const [copied, setCopied] = useState<"mod" | "repo" | "link" | "domain" | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [pinStatus, setPinStatus] = useState<"idle" | "working">("idle");
   const [hasStarred, setHasStarred] = useState(false);
   const [starStatus, setStarStatus] = useState<"idle" | "submitting" | "error">("idle");
-  const [deleteStatus, setDeleteStatus] = useState<"idle" | "confirm" | "deleting" | "error">("idle");
+  const [lockedHintOpen, setLockedHintOpen] = useState(false);
+  const favWrapRef = useRef<HTMLSpanElement>(null);
   const [coverEditorOpen, setCoverEditorOpen] = useState(false);
 
   // --- Derived ---
+  // Starring writes on-chain, so it needs a builder. A connected non-builder
+  // gets the "become a builder" nudge instead of a doomed tx (mirrors the
+  // feed-card gate in App.tsx's AppCard).
+  const { hasIdentity, account: onboardingAccount } = useOnboarding();
   const voter = signer.selectedAccount?.h160Address;
   const isOwner = !!voter && !!entry.owner
     && voter.toLowerCase() === entry.owner.toLowerCase();
+  // Author = the app's owner. Resolve registry username → wallet → short H160.
+  const { username: ownerUsername } = useRootUsername(
+    entry.owner as `0x${string}` | undefined,
+  );
+  const authorName = entry.owner
+    ? displayNameForAccount(ownerUsername, entry.owner)
+    : null;
   const name = details?.metadata?.name ?? entry.domain.replace(/\.dot$/, "");
   const desc = details?.metadata?.description;
   const repo = details?.metadata?.repository;
@@ -75,7 +89,9 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
   const coverUrl = useIconUrl(details?.metadata?.cover_cid);
   const iconUrl = useIconUrl(details?.metadata?.icon_cid);
   const heroUrl = coverUrl ?? iconUrl;
-  const bgSrc = heroUrl ?? placeholderFor(entry.domain);
+  const heroStyle: CSSProperties = heroUrl
+    ? { backgroundImage: `url(${heroUrl})` }
+    : { background: cardColorForDomain(entry.domain) };
   const starCount = details?.starCount ?? 0;
   const modCount = details?.modCount ?? 0;
   const readmeHtml = useMemo(() => {
@@ -85,9 +101,20 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
 
   // --- Effects ---
   useEffect(() => {
-    if (!voter) return;
-    fetchHasStarred(entry.domain, voter).then(setHasStarred);
-  }, [entry.domain, voter, fetchHasStarred]);
+    if (!voter) {
+      setHasStarred(false);
+      return;
+    }
+    if (details?.hasStarred !== undefined) {
+      setHasStarred(details.hasStarred);
+      return;
+    }
+    let cancelled = false;
+    fetchHasStarred(entry.domain, voter).then(starred => {
+      if (!cancelled) setHasStarred(starred);
+    });
+    return () => { cancelled = true; };
+  }, [entry.domain, voter, details?.hasStarred, fetchHasStarred]);
 
   useEffect(() => () => journeyTracker.abandon("star-app"), []);
 
@@ -98,22 +125,23 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
   }, [toast]);
 
   // --- Handlers ---
-  const toggleStar = async () => {
-    if (!voter || isOwner || starStatus === "submitting") return;
-    const wasStarred = hasStarred;
+  const handleStarClick = async () => {
+    if (!voter || isOwner || hasStarred || starStatus === "submitting") return;
+    // Connected, but not yet a builder → gentle nudge anchored to the pill,
+    // not a transaction the contract will reject.
+    if (onboardingAccount && !hasIdentity) {
+      setLockedHintOpen(true);
+      return;
+    }
     journeyTracker.start("star-app", {
       "star.domain": entry.domain,
-      "star.action": wasStarred ? "unstar" : "star",
+      "star.action": "star",
     });
     setStarStatus("submitting");
     try {
-      if (wasStarred) {
-        await onUnstar(entry.domain);
-      } else {
-        await onStar(entry.domain);
-      }
+      await onStar(entry.domain);
       journeyTracker.milestone("star-app", "tx-submitted");
-      setHasStarred(!wasStarred);
+      setHasStarred(true);
       setStarStatus("idle");
       journeyTracker.complete("star-app");
     } catch (err) {
@@ -125,15 +153,9 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
       setStarStatus("error");
       journeyTracker.fail("star-app", "star-tx-failed", err);
       Sentry.captureException(err, {
-        tags: { action: wasStarred ? "unstar" : "star", domain: entry.domain },
+        tags: { action: "star", domain: entry.domain },
       });
     }
-  };
-
-  const handleDelete = async () => {
-    if (deleteStatus !== "confirm") { setDeleteStatus("confirm"); return; }
-    setDeleteStatus("deleting");
-    try { await onDelete(entry.domain); } catch { setDeleteStatus("error"); }
   };
 
   const handleTogglePin = async () => {
@@ -146,7 +168,7 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
     }
   };
 
-  const copyText = (text: string, key: "mod" | "repo" | "link") => {
+  const copyText = (text: string, key: "mod" | "repo" | "link" | "domain") => {
     navigator.clipboard.writeText(text);
     addUserActionBreadcrumb(`Copy ${key}`, { domain: entry.domain });
     setCopied(key);
@@ -196,9 +218,10 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
           </svg>
         </button>
 
-        <div className="detail-hero" style={{ backgroundImage: `url(${bgSrc})` }}>
+        <div className="detail-hero" style={heroStyle}>
           <div className="detail-hero-fade" />
-          {isOwner && onUpdateCoverImage && (
+          {/* Edit cover button disabled for now. */}
+          {/* {isOwner && onUpdateCoverImage && (
             <button
               type="button"
               className="detail-edit-cover"
@@ -207,7 +230,7 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
             >
               Edit cover
             </button>
-          )}
+          )} */}
           <div className="detail-hero-content">
             <div className="detail-tag-row">
               {tag && <span className="detail-tag" data-testid="detail-tag">{tag}</span>}
@@ -223,23 +246,57 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
                 </span>
               )}
             </div>
-            <h1 className="detail-name" data-testid="detail-name">{name}</h1>
+            <div className="detail-title-row">
+              <h1 className="detail-name" data-testid="detail-name">{name}</h1>
+              <LaunchButton domain={entry.domain} data-testid="detail-launch" />
+            </div>
+            {authorName && (
+              <p className="detail-author" data-testid="detail-author">
+                by{" "}
+                {isOwner ? (
+                  <span className="detail-author-name">{authorName}</span>
+                ) : (
+                  <Link
+                    className="detail-author-name detail-author-link"
+                    to={`/profile/${entry.owner}`}
+                    state={{ fromApp: entry.domain }}
+                    onClick={onClose}
+                    data-testid="detail-author-link"
+                  >
+                    {authorName}
+                  </Link>
+                )}
+              </p>
+            )}
             {desc && <p className="detail-desc" data-testid="detail-description">{desc}</p>}
           </div>
         </div>
 
         <div className="detail-body">
           <div className="detail-links">
-            <a
-              className="detail-link"
-              href={`https://${entry.domain}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={handleExternalClick}
-              data-testid="detail-domain-link"
-            >
-              {entry.domain}
-            </a>
+            <span className="detail-link-copy" data-testid="detail-domain">
+              <a
+                className="detail-link"
+                href={`https://${entry.domain}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleExternalClick}
+                data-testid="detail-domain-link"
+              >
+                {entry.domain}
+              </a>
+              <span
+                className="detail-link-icon"
+                onClick={() => copyText(entry.domain, "domain")}
+                data-testid="detail-domain-copy"
+                role="button"
+                tabIndex={0}
+                aria-label="Copy domain"
+                onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); copyText(entry.domain, "domain"); } }}
+              >
+                {copied === "domain" ? <CheckIcon /> : <CopyIcon />}
+              </span>
+            </span>
             {repo && (
               <span
                 className="detail-link detail-link-copy"
@@ -292,90 +349,9 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
             )}
           </div>
 
-          <div className="detail-section">
-            <h3 className="detail-section-title">Star this app</h3>
-            {signer.selectedAccount ? (
-              isOwner ? (
-                <p className="detail-no-readme" data-testid="star-self-notice">
-                  <em>You can't star your own app.</em>
-                </p>
-              ) : (
-                <div className="review-form" data-testid="star-form">
-                  <button
-                    className={`btn btn-publish ${hasStarred ? "btn-starred" : ""}`}
-                    disabled={starStatus === "submitting"}
-                    onClick={toggleStar}
-                    data-testid="star-toggle-btn"
-                    data-status={starStatus}
-                    data-starred={hasStarred ? "true" : "false"}
-                    aria-label={hasStarred ? "Remove star" : "Star this app"}
-                  >
-                    <StarIcon width="14" height="14" />
-                    {starStatus === "submitting"
-                      ? hasStarred ? "Unstarring..." : "Starring..."
-                      : hasStarred ? "Starred" : "Star"}
-                  </button>
-                  {starStatus === "error" && (
-                    <ErrorBanner
-                      message="Failed to update star. Please try again."
-                      compact
-                      testid="star-error"
-                    />
-                  )}
-                </div>
-              )
-            ) : (
-              <p className="detail-no-readme" data-testid="star-connect-prompt">
-                <em>Sign in to star this app.</em>
-              </p>
-            )}
-          </div>
-
-          <div className="detail-section">
-            <h3 className="detail-section-title">Mod</h3>
-            {repo ? (
-              <div className="mod-actions">
-                <a
-                  className="btn btn-revx"
-                  href={`${REVX_URL}/editor?mod=${encodeURIComponent(entry.domain)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={handleExternalClick}
-                  data-testid="detail-revx-link"
-                >
-                  Vibe Code in RevX
-                </a>
-                <span className="mod-actions-or">or with {CLI_COMMAND} CLI</span>
-                <div
-                  className="code-block"
-                  onClick={() => copyText(modCmd, "mod")}
-                  data-testid="mod-command"
-                >
-                  <code>{modCmd}</code>
-                  <span className="copy-icon">{copied === "mod" ? <CheckIcon /> : <CopyIcon />}</span>
-                </div>
-              </div>
-            ) : (
-              <p className="detail-play-only" data-testid="detail-play-only">
-                <em>This app is play-only — its source isn't published, so it can't be modded.</em>
-              </p>
-            )}
-          </div>
-
-          <div className="detail-section">
-            <h3 className="detail-section-title">Readme</h3>
-            {readmeHtml ? (
-              <div
-                className="detail-readme"
-                data-testid="detail-readme"
-                dangerouslySetInnerHTML={{ __html: readmeHtml }}
-              />
-            ) : (
-              <p className="detail-no-readme" data-testid="detail-no-readme"><em>No readme provided.</em></p>
-            )}
-          </div>
-
-          {isOwner && onSetVisibility && (
+          {/* Owner sees the visibility toggle where everyone else sees the
+              star pill — the two never co-exist (you can't star your own app). */}
+          {isOwner && onSetVisibility ? (
             <div className="detail-section" data-testid="detail-visibility-section">
               <h3 className="detail-section-title">Visibility</h3>
               <div className="visibility-toggle">
@@ -404,37 +380,105 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
                   : "This app is visible to everyone."}
               </p>
             </div>
-          )}
-
-          {(isOwner || isAdmin) && (
-            <div className="detail-section detail-danger" data-testid="detail-danger-zone">
-              {deleteStatus === "error" && (
-                <ErrorBanner
-                  message="Failed to delete. Please try again."
-                  compact
-                  testid="delete-error"
-                />
+          ) : (
+            <div className="detail-section">
+              <h3 className="detail-section-title">Star this app</h3>
+              {isOwner ? (
+                <p className="detail-no-readme" data-testid="star-self-notice">
+                  <em>You can't star your own app.</em>
+                </p>
+              ) : signer.selectedAccount ? (
+                <div className="review-form" data-testid="star-form">
+                  <span
+                    className="detail-star-wrap"
+                    ref={favWrapRef}
+                    style={{ "--journey-hue": "var(--cat-social)" } as CSSProperties}
+                  >
+                    <button
+                      className={`detail-star-btn${hasStarred ? " is-active" : ""}`}
+                      disabled={hasStarred || starStatus === "submitting"}
+                      onClick={handleStarClick}
+                      data-testid="star-toggle-btn"
+                      data-status={starStatus}
+                      data-starred={hasStarred ? "true" : "false"}
+                      aria-label={hasStarred ? "Already starred" : "Star this app"}
+                      aria-pressed={hasStarred}
+                    >
+                      <StarIcon width="16" height="16" />
+                      <span className="detail-star-label">
+                        {starStatus === "submitting"
+                          ? "Starring..."
+                          : hasStarred ? "Starred" : "Star"}
+                      </span>
+                      {details?.starCount === undefined ? (
+                        <span className="bar-count is-loading" aria-hidden="true" />
+                      ) : starCount > 0 ? (
+                        <span className="detail-star-count" data-testid="detail-star-pill-count">{starCount}</span>
+                      ) : null}
+                    </button>
+                    {lockedHintOpen && (
+                      <LockedHint onClose={() => setLockedHintOpen(false)} anchorRef={favWrapRef} />
+                    )}
+                  </span>
+                  {starStatus === "error" && (
+                    <ErrorBanner
+                      message="Failed to star app. Please try again."
+                      compact
+                      testid="star-error"
+                    />
+                  )}
+                </div>
+              ) : (
+                <p className="detail-no-readme" data-testid="star-connect-prompt">
+                  <em>Sign in to star this app.</em>
+                </p>
               )}
-              <div className="detail-delete-actions">
-                <button
-                  className={`btn ${deleteStatus === "confirm" ? "btn-delete-confirm" : "btn-delete"}`}
-                  disabled={deleteStatus === "deleting"}
-                  onClick={handleDelete}
-                  data-testid={deleteStatus === "confirm" ? "delete-confirm-btn" : "delete-btn"}
-                  data-status={deleteStatus}
-                >
-                  {deleteStatus === "confirm" ? "Confirm Delete" : deleteStatus === "deleting" ? "Deleting..." : "Delete App"}
-                </button>
-                {deleteStatus === "confirm" && (
-                  <button
-                    className="btn btn-ghost"
-                    onClick={() => setDeleteStatus("idle")}
-                    data-testid="delete-cancel-btn"
-                  >Cancel</button>
-                )}
-              </div>
             </div>
           )}
+
+          <div className="detail-section">
+            <h3 className="detail-section-title">Mod</h3>
+            {repo ? (
+              <div className="mod-actions">
+                <a
+                  className="btn btn-revx"
+                  href={`${REVX_URL}/editor?mod=${encodeURIComponent(entry.domain)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={handleExternalClick}
+                  data-testid="detail-revx-link"
+                >
+                  Vibe Code in RevX
+                </a>
+                <span className="mod-actions-or">or with {CLI_COMMAND} CLI</span>
+                <div
+                  className="code-block"
+                  onClick={() => copyText(modCmd, "mod")}
+                  data-testid="mod-command"
+                >
+                  <code>{modCmd}</code>
+                  <span className="copy-icon">{copied === "mod" ? <CheckIcon /> : <CopyIcon />}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="detail-play-only" data-testid="detail-play-only">
+                <em>This app is play-only; its source isn't published, so it can't be modded.</em>
+              </p>
+            )}
+          </div>
+
+          <div className="detail-section">
+            <h3 className="detail-section-title">Readme</h3>
+            {readmeHtml ? (
+              <div
+                className="detail-readme"
+                data-testid="detail-readme"
+                dangerouslySetInnerHTML={{ __html: readmeHtml }}
+              />
+            ) : (
+              <p className="detail-no-readme" data-testid="detail-no-readme"><em>No readme provided.</em></p>
+            )}
+          </div>
         </div>
       </div>
       {toast && (
@@ -450,7 +494,7 @@ export default function AppDetailPanel({ entry, details, signer, isAdmin, isPinn
             await onUpdateCoverImage(entry.domain, bytes);
             setCoverEditorOpen(false);
           }}
-          onCancelled={() => setToast("Cover edit cancelled — permission not granted.")}
+          onCancelled={() => setToast("Cover edit cancelled. Permission not granted.")}
         />
       )}
     </div>

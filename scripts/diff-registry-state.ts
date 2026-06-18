@@ -75,7 +75,6 @@ interface SnapshotSource {
 interface Snapshot {
   format_version: number;
   source: SnapshotSource;
-  context_id: string;
   apps: ExportedApp[];
   pinned: string[];
   leaderboard: LeaderboardEntry[];
@@ -99,7 +98,6 @@ function loadSnapshot(filePath: string): Snapshot {
   return {
     format_version: parsed.format_version ?? 0,
     source: parsed.source ?? { network: "", package: "", address: "", version: 0 },
-    context_id: parsed.context_id ?? "",
     apps: parsed.apps ?? [],
     pinned: parsed.pinned ?? [],
     leaderboard: parsed.leaderboard ?? [],

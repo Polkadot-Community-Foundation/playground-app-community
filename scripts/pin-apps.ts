@@ -19,6 +19,7 @@
  *
  * Usage: tsx scripts/pin-apps.ts <domain> [<domain> ...]
  * Env:   MNEMONIC — sr25519 mnemonic for a sudo or admin account
+ *        CHAIN    — target network (paseo | summit); default paseo
  *
  * Pinning makes an app render at the top of the Apps grid in the
  * playground-app frontend. The canonical pin set is the structured
@@ -37,10 +38,9 @@ import {
 } from "@parity/product-sdk-contracts";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { ss58ToH160 } from "@parity/product-sdk-address";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import cdmJson from "../cdm.json" with { type: "json" };
 import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.ts";
-import { assetHubWsUrl } from "./_lib.ts";
+import { assetHubDescriptor, assetHubWsUrl, resolveChain } from "./_lib.ts";
 
 const REGISTRY_CONTRACT = PLAYGROUND_REGISTRY_CONTRACT;
 
@@ -65,17 +65,18 @@ if (!mnemonic) {
 // ---------------------------------------------------------------------------
 
 const { signer, ss58Address: origin } = seedToAccount(mnemonic, "");
+const chain = resolveChain();
 
 // ---------------------------------------------------------------------------
 // Execute
 // ---------------------------------------------------------------------------
 
-const client = createClient(getWsProvider(assetHubWsUrl()));
+const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
 const manager = await ContractManager.fromLiveClient(
   cdmJson as unknown as CdmJson,
   client,
-  paseo_asset_hub,
+  assetHubDescriptor(chain),
   {
     defaultSigner: signer,
     defaultOrigin: origin,
@@ -87,6 +88,7 @@ const manager = await ContractManager.fromLiveClient(
 try {
   const registry = manager.getContract(REGISTRY_CONTRACT);
   const contractAddress = manager.getAddress(REGISTRY_CONTRACT);
+  console.log(`Chain:    ${chain}`);
   console.log(`Contract: ${REGISTRY_CONTRACT} (${contractAddress})`);
   console.log(`Caller:   ${origin} (${ss58ToH160(origin)})`);
   console.log(`Pinning ${domains.length} domain(s)...\n`);

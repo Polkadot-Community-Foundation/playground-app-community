@@ -14,38 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const getUsernameOwner = vi.hoisted(() => vi.fn());
-
-vi.mock("./contracts.ts", () => ({
-  registryReady: Promise.resolve({
-    getUsernameOwner: { query: (...args: unknown[]) => getUsernameOwner(...args) },
-  }),
-}));
+import { describe, expect, it } from "vitest";
 
 import {
   deterministicNameForAccount,
   displayNameForAccount,
   profilePathForAccount,
   resolveProfileIdentifier,
-  ZERO_H160,
 } from "./username";
 
-beforeEach(() => {
-  getUsernameOwner.mockReset();
-});
-
 describe("profilePathForAccount", () => {
-  it("prefers a registry username over the raw address", () => {
+  it("always routes by the H160 address (resolver is H160-only)", () => {
     expect(
-      profilePathForAccount("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "alice"),
-    ).toBe("/profile/alice");
-  });
-
-  it("falls back to the address when no username is set", () => {
-    expect(
-      profilePathForAccount("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", null),
+      profilePathForAccount("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
     ).toBe("/profile/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   });
 });
@@ -57,12 +38,26 @@ describe("displayNameForAccount", () => {
     expect(displayNameForAccount("alice", account)).toBe("alice");
   });
 
-  it("falls back to a deterministic two-word name", () => {
+  it("falls back to a deterministic hyphenated handle with a hex discriminator once the chain confirmed no username", () => {
     const name = displayNameForAccount(null, account);
 
     expect(name).toBe(deterministicNameForAccount(account));
-    expect(name.split(" ")).toHaveLength(2);
+    // "<descriptor>-<animal>-<hex>" — a valid claimable handle, identical to
+    // what the reveal/anon flow claims (no space/# display variant).
+    expect(name).toMatch(/^[a-z]+-[a-z]+-[0-9a-f]{4}$/);
     expect(name).not.toContain("0x");
+  });
+
+  it("gives two distinct accounts distinct claimable handles (the hex tail keeps anon names unique)", () => {
+    const a = "0x1111111111111111111111111111111111111111";
+    const b = "0x1111111111111111111111111111111111112222";
+    expect(deterministicNameForAccount(a)).not.toBe(deterministicNameForAccount(b));
+  });
+
+  it("shows an ellipsis while the username is still unknown (#324)", () => {
+    // undefined = the read hasn't succeeded yet. The generated name must
+    // never paint over a possibly-set handle during loading or RPC failure.
+    expect(displayNameForAccount(undefined, account)).toBe("…");
   });
 
   it("normalizes account casing before deriving the fallback", () => {
@@ -73,7 +68,7 @@ describe("displayNameForAccount", () => {
 });
 
 describe("resolveProfileIdentifier", () => {
-  it("accepts a raw H160 without querying the username reverse index", async () => {
+  it("accepts a raw H160 and normalizes its casing", async () => {
     const result = await resolveProfileIdentifier("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
     expect(result).toEqual({
@@ -81,28 +76,15 @@ describe("resolveProfileIdentifier", () => {
       lookup: "address",
       normalizedInput: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     });
-    expect(getUsernameOwner).not.toHaveBeenCalled();
   });
 
-  it("resolves a username to its owner H160", async () => {
-    getUsernameOwner.mockResolvedValue({
-      success: true,
-      value: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    });
-
-    const result = await resolveProfileIdentifier("Alice");
-
-    expect(getUsernameOwner).toHaveBeenCalledWith("alice");
-    expect(result).toEqual({
-      address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      lookup: "username",
-      normalizedInput: "alice",
-    });
+  it("returns null for a non-H160 segment (profile URLs are H160-only now)", async () => {
+    // Usernames moved to the People chain — there is no contract reverse index,
+    // so a name segment no longer resolves to an owner.
+    await expect(resolveProfileIdentifier("Alice")).resolves.toBeNull();
   });
 
-  it("returns null for unclaimed usernames", async () => {
-    getUsernameOwner.mockResolvedValue({ success: true, value: ZERO_H160 });
-
-    await expect(resolveProfileIdentifier("nobody")).resolves.toBeNull();
+  it("returns null for empty input", async () => {
+    await expect(resolveProfileIdentifier("  ")).resolves.toBeNull();
   });
 });

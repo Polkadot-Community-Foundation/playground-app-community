@@ -36,14 +36,16 @@ import {
   Pin,
   Activity,
   AlertTriangle,
+  Timer,
 } from "lucide-react";
+import { LEADERBOARD_COUNTDOWN_KIND, type LeaderboardCountdownPayload } from "./leaderboardCountdownEventStreamSource";
 import { handleExternalClick } from "../externalNavigation";
-import { deterministicNameForAccount, profilePathForAccount, shortAddr } from "../username";
+import { profilePathForAccount } from "../username";
 import { type EventStreamItem } from "./eventStream";
 import {
   createEventStreamPool,
   createEventStreamReplayCursor,
-  createMixedEventStreamReplayItems,
+  createUniqueMixedEventStreamReplayItems,
   isEventStreamHighlight,
   nextEventStreamReplayItem,
   type EventStreamReplayCursor,
@@ -59,9 +61,13 @@ const TICKER_EXCLUDED_KINDS = [
   "stream.source-error",
   "registry.Pinned",
   "registry.Unpinned",
+  "registry.Unpublished",
   "registry.VisibilityChanged",
   "registry.RatingRemoved",
-  "registry.UsernameCleared",
+  "registry.StarPointRefunded",
+  "registry.IdentityCleared",
+  "registry.AnonymousBonusAwarded",
+  "registry.FaucetFailed",
 ] as const;
 const STREAM_OPTIONS = { limit: STREAM_POOL_LIMIT } as const;
 
@@ -72,6 +78,7 @@ interface TickerSlot {
 
 function iconFor(item: EventStreamItem): ReactNode {
   const k = item.kind;
+  if (k === LEADERBOARD_COUNTDOWN_KIND) return <Timer size={12} aria-hidden="true" />;
   if (item.tone === "warning" || item.tone === "negative") return <AlertTriangle size={12} aria-hidden="true" />;
   if (k.includes("Pinned") || k.includes("pinned")) return <Pin size={12} aria-hidden="true" />;
   if (k.includes("Star") || k.includes("star")) return <Star size={12} aria-hidden="true" />;
@@ -114,16 +121,11 @@ function titleLinksFor(item: EventStreamItem): readonly TitleLink[] {
     if (start < 0) continue;
 
     if (entity.type === "account") {
-      const isGeneratedLabel =
-        label === deterministicNameForAccount(entity.id) ||
-        label === shortAddr(entity.id) ||
-        label.includes("...");
-      const username = isGeneratedLabel ? null : label;
       links.push({
         start,
         end: start + label.length,
         label,
-        href: profilePathForAccount(entity.id, username),
+        href: profilePathForAccount(entity.id),
         external: false,
       });
     } else if (entity.type === "domain") {
@@ -206,7 +208,7 @@ function useTickerSlots(pool: readonly EventStreamItem[]) {
     if (slotsRef.current.length === 0) {
       for (const item of pool) knownIdsRef.current.add(item.id);
       const cursor = createEventStreamReplayCursor();
-      const initialSlots = createMixedEventStreamReplayItems(
+      const initialSlots = createUniqueMixedEventStreamReplayItems(
         pool,
         { itemCount: TICKER_INITIAL_ITEM_COUNT },
         cursor,
@@ -221,7 +223,17 @@ function useTickerSlots(pool: readonly EventStreamItem[]) {
     if (fresh.length === 0) return;
 
     for (const item of fresh) knownIdsRef.current.add(item.id);
-    const freshLive = fresh.filter((item) => !isEventStreamHighlight(item));
+    const topUpItems = slotsRef.current.length < TICKER_INITIAL_ITEM_COUNT
+      ? fresh.slice(0, TICKER_INITIAL_ITEM_COUNT - slotsRef.current.length)
+      : [];
+    if (topUpItems.length > 0) {
+      const nextSlots = [...slotsRef.current, ...topUpItems.map(createSlot)];
+      slotsRef.current = nextSlots;
+      setSlots(nextSlots);
+    }
+
+    const topUpIds = new Set(topUpItems.map((item) => item.id));
+    const freshLive = fresh.filter((item) => !topUpIds.has(item.id) && !isEventStreamHighlight(item));
     pendingRef.current.push(...freshLive);
     for (const item of freshLive) pendingIdsRef.current.add(item.id);
     if (pendingRef.current.length > TICKER_QUEUE_LIMIT) {
@@ -277,6 +289,7 @@ function useTickerMarquee(
   const advanceByRef = useRef(0);
   const lastFrameRef = useRef<number | null>(null);
   const advanceRef = useRef(advance);
+  const startedOffscreenRef = useRef(false);
 
   useEffect(() => {
     advanceRef.current = advance;
@@ -284,6 +297,16 @@ function useTickerMarquee(
 
   useLayoutEffect(() => {
     advanceByRef.current = measureFirstItemAdvance(rowRef.current);
+    if (startedOffscreenRef.current || slots.length === 0 || prefersReducedTickerMotion()) return;
+
+    const startOffset = windowRef.current?.getBoundingClientRect().width ?? 0;
+    if (startOffset <= 0) return;
+
+    startedOffscreenRef.current = true;
+    offsetRef.current = -startOffset;
+    if (trackRef.current) {
+      trackRef.current.style.transform = `translate3d(${startOffset}px, 0, 0)`;
+    }
   }, [slots]);
 
   useEffect(() => {
@@ -300,7 +323,7 @@ function useTickerMarquee(
   }, []);
 
   useEffect(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (prefersReducedTickerMotion()) return;
 
     let frameId = 0;
     const tick = (time: number) => {
@@ -340,6 +363,12 @@ function useTickerMarquee(
   }, []);
 
   return { windowRef, trackRef, rowRef, setPaused };
+}
+
+function prefersReducedTickerMotion(): boolean {
+  return typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function measureFirstItemAdvance(row: HTMLDivElement | null): number {
@@ -387,16 +416,43 @@ interface TickerItemProps {
   interactive: boolean;
 }
 
+// Beyond this many hours out, show the static close-time memo (item.title)
+// rather than a coarse "in N days" countdown.
+const COUNTDOWN_LIVE_WINDOW_MS = 20 * 3_600_000;
+
+// `live` is true only while the active "in N …" countdown is showing — the
+// static close-time memo and the post-deadline message render in the default
+// (white) colour; the live countdown is tinted red (see App.css).
+function countdownTitleFor(item: EventStreamItem): { title: string; live: boolean } {
+  const deadline = (item.payload as LeaderboardCountdownPayload | undefined)?.deadline;
+  if (typeof deadline !== "number" || Number.isNaN(deadline)) return { title: item.title, live: false };
+
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) return { title: "Winners have been decided!", live: false };
+  if (remainingMs > COUNTDOWN_LIVE_WINDOW_MS) return { title: item.title, live: false };
+
+  const minutes = Math.ceil(remainingMs / 60_000);
+  if (minutes < 60) {
+    return { title: `Winners decided in ${minutes} minute${minutes === 1 ? "" : "s"}!`, live: true };
+  }
+  const hours = Math.round(remainingMs / 3_600_000);
+  return { title: `Winners decided in ${hours} hour${hours === 1 ? "" : "s"}!`, live: true };
+}
+
 function TickerItem({ item, interactive }: TickerItemProps) {
   const titleLinks = interactive ? titleLinksFor(item) : [];
   const href = interactive && titleLinks.length === 0 ? entityHrefFor(item) : undefined;
-  const className = `event-ticker-item${href ? " event-ticker-item-link" : ""}`;
+  const countdown = item.kind === LEADERBOARD_COUNTDOWN_KIND ? countdownTitleFor(item) : null;
+  const urgent = countdown?.live ?? false;
+  const className = `event-ticker-item${href ? " event-ticker-item-link" : ""}${urgent ? " event-ticker-item--urgent" : ""}`;
+  const title = countdown ? countdown.title : item.title;
+  const titleClassName = `event-ticker-title${countdown?.live ? " event-ticker-title-countdown" : ""}`;
 
   const content = (
     <>
       <span className="event-ticker-icon">{iconFor(item)}</span>
-      <span className="event-ticker-title">
-        {titleLinks.length > 0 ? renderLinkedTitle(item.title, titleLinks) : item.title}
+      <span className={titleClassName}>
+        {titleLinks.length > 0 ? renderLinkedTitle(item.title, titleLinks) : title}
       </span>
     </>
   );

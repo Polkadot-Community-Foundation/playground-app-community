@@ -39,8 +39,22 @@ function errMsg(err: unknown): string {
 
 export function isExpectedError(err: unknown): boolean {
   if (isSigningRejection(err)) return true;
+  if (err instanceof Error && err.name === "InsufficientFundsError") return true;
+  // The guard's identity gate — a not-yet-builder routed to onboarding, not a
+  // failure (see utils/guardedWrite.ts).
+  if (err instanceof Error && err.name === "NotABuilderError") return true;
   const msg = errMsg(err);
   return msg !== "" && EXPECTED_PATTERNS.some((re) => re.test(msg));
+}
+
+// The fee/funds subset of EXPECTED_PATTERNS — used to route a write failure
+// into the resource drip (see utils/guardedWrite.ts). Kept in sync with the
+// "funder dry / fee shortfall" entry above.
+const PAYMENT_PATTERN = /InsufficientBalance|Out of gas|Invalid: Payment/i;
+
+export function isPaymentError(err: unknown): boolean {
+  const msg = errMsg(err);
+  return msg !== "" && PAYMENT_PATTERN.test(msg);
 }
 
 export { isSigningRejection };

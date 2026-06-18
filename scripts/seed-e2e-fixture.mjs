@@ -154,10 +154,20 @@ try {
   const registry = createContract(runtime, registryEntry.address, registryEntry.abi);
 
   console.log(`[seed] Calling registry.publish(${FIXTURE_DOMAIN}, ${cid}, PUBLIC)…`);
-  const txResult = await registry.publish.tx(FIXTURE_DOMAIN, cid, VISIBILITY_PUBLIC, {
-    signer: funder.signer,
-    origin: funder.ss58Address,
-  });
+  // publish() is a 7-arg ABI (owner/modded_from/is_moddable/is_dev_signer were
+  // added for the modding + scoring work). Mirror src/App.tsx's call shape:
+  //   owner: None  → contract defaults owner to the caller (the funder)
+  //   modded_from: "" → fixture is not a mod
+  const txResult = await registry.publish.tx(
+    FIXTURE_DOMAIN,
+    cid,
+    VISIBILITY_PUBLIC,
+    { isSome: false, value: "0x0000000000000000000000000000000000000000" },
+    "",
+    false,
+    false,
+    { signer: funder.signer, origin: funder.ss58Address },
+  );
 
   if (!txResult.ok) {
     console.error(`[seed] registry.publish failed:`, txResult);

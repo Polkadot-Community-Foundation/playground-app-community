@@ -70,7 +70,7 @@ The app reads from the `@example/playground-registry` contract, which stores:
 
 ## Telemetry
 
-Sentry is enabled by default — the DSN is hardcoded in [`src/sentry.ts`](src/sentry.ts) (DSN is public-safe; it only allows sending events). To send to a different project, set `VITE_SENTRY_DSN` in `.env.local`. To disable locally, set it explicitly empty (`VITE_SENTRY_DSN=`).
+Sentry is configured in [`src/sentry.ts`](src/sentry.ts) and enabled only when a DSN is supplied via `VITE_SENTRY_DSN` (DSN is public-safe; it only allows sending events). CI reads it from the `SENTRY_DSN` GitHub Actions secret and passes it into the frontend build. Local `pnpm dev` / `pnpm build:frontend` runs with Sentry disabled unless you set `VITE_SENTRY_DSN` in `.env.local`.
 
 Wired up:
 

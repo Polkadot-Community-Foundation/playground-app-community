@@ -26,4 +26,4 @@ export {
   addAdminActionBreadcrumb,
   captureWarning,
 } from "./breadcrumb-helpers.ts";
-export { isExpectedError, isSigningRejection } from "./expected-errors.ts";
+export { isExpectedError, isPaymentError, isSigningRejection } from "./expected-errors.ts";

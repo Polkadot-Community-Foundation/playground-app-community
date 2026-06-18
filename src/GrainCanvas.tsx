@@ -15,10 +15,15 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { useRef, useEffect } from "react";
+import { useIsMobile } from "./utils";
 
 /**
  * Static procedural grain — paints once on mount, repaints on resize.
  * Ported from the playground-dapp-store mockup's noise_bg.js.
+ *
+ * Skipped on mobile: the mobile host webview composites mix-blend-mode
+ * incorrectly, so the grain + lighten-blend stack can't be trusted there.
+ * The page falls back to the flat #04040A body background (App.css).
  */
 
 type NoiseOptions = {
@@ -134,8 +139,10 @@ function renderNoise(canvas: HTMLCanvasElement, opts: NoiseOptions) {
 
 export default function GrainCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
+    if (isMobile) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -163,7 +170,9 @@ export default function GrainCanvas() {
       window.removeEventListener("resize", onResize);
       if (t) clearTimeout(t);
     };
-  }, []);
+  }, [isMobile]);
+
+  if (isMobile) return null;
 
   return (
     <canvas

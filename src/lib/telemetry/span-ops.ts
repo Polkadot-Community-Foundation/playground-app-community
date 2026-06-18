@@ -15,9 +15,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 export const SpanOp = {
-  // Chain reads (registry/reputation queries)
+  // Chain reads (registry queries)
   CHAIN_QUERY: "chain.query",
-  // Chain writes (registry/reputation transactions)
+  // Chain writes (registry transactions)
   CHAIN_TX: "chain.tx",
   // Bulletin IPFS reads (metadata + icon fetches)
   BULLETIN_FETCH: "bulletin.fetch",

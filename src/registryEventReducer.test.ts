@@ -140,6 +140,7 @@ function makeDeps(overrides: Partial<RegistryEventDeps> = {}): RegistryEventDeps
     getCurrentUserAddr: () => null,
     refreshSocialCounts: vi.fn(),
     refreshLeaderboard: vi.fn(),
+    refreshIdentities: vi.fn(),
     ...overrides,
   };
 }
@@ -276,19 +277,30 @@ describe("handleRegistryEvent", () => {
       expect(deps.refreshLeaderboard).toHaveBeenCalled();
     });
 
-    it("UsernameSet refreshes the leaderboard so display names update", () => {
+    it("IdentityLinked refreshes the leaderboard and the per-account identity reads", () => {
       const deps = makeDeps();
-      handleRegistryEvent("UsernameSet", "", deps);
+      handleRegistryEvent("IdentityLinked", "", deps);
       expect(deps.refreshSocialCounts).not.toHaveBeenCalled();
       expect(deps.refreshLeaderboard).toHaveBeenCalled();
+      expect(deps.refreshIdentities).toHaveBeenCalled();
     });
 
-    it("UsernameCleared refreshes the leaderboard so display names update", () => {
+    it("IdentityCleared refreshes the leaderboard and the per-account identity reads", () => {
       const deps = makeDeps();
-      handleRegistryEvent("UsernameCleared", "", deps);
+      handleRegistryEvent("IdentityCleared", "", deps);
       expect(deps.refreshSocialCounts).not.toHaveBeenCalled();
       expect(deps.refreshLeaderboard).toHaveBeenCalled();
+      expect(deps.refreshIdentities).toHaveBeenCalled();
     });
+
+    it("IdentityBonusAwarded refreshes the leaderboard and the per-account identity reads", () => {
+      const deps = makeDeps();
+      handleRegistryEvent("IdentityBonusAwarded", "", deps);
+      expect(deps.refreshSocialCounts).not.toHaveBeenCalled();
+      expect(deps.refreshLeaderboard).toHaveBeenCalled();
+      expect(deps.refreshIdentities).toHaveBeenCalled();
+    });
+
   });
 
   it("exhaustively covers EVENT_NAMES (catches new events added to the contract)", () => {
@@ -308,9 +320,19 @@ describe("handleRegistryEvent", () => {
       "ModPointAwarded",
       "StarPointAwarded",
       "StarPointRefunded",
-      "UsernameBonusAwarded",
-      "UsernameSet",
-      "UsernameCleared",
+      "IdentityLinked",
+      "IdentityCleared",
+      "IdentityBonusAwarded",
+      "FaucetFailed",
     ]);
+  });
+
+  it("FaucetFailed is a safe no-op in the reducer (surfaced via the faucet tx, not here)", () => {
+    const deps = makeDeps();
+    handleRegistryEvent("FaucetFailed", "", deps);
+    expect(deps.refreshSocialCounts).not.toHaveBeenCalled();
+    expect(deps.refreshLeaderboard).not.toHaveBeenCalled();
+    expect(deps.refreshIdentities).not.toHaveBeenCalled();
+    expect(deps.fetchEntry).not.toHaveBeenCalled();
   });
 });

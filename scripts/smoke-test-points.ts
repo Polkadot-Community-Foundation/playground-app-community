@@ -45,6 +45,8 @@ import { createClient } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import {
   ContractManager,
+  createContract,
+  createContractRuntimeFromClient,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
 import { seedToAccount } from "@parity/product-sdk-keys";
@@ -53,8 +55,7 @@ import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub
 import cdmJsonRaw from "../cdm.json" with { type: "json" };
 import { XP_VALUES } from "../src/xpValues";
 
-const ASSET_HUB_WS =
-  process.env.ASSET_HUB_WS_URL ?? "wss://paseo-asset-hub-next-rpc.polkadot.io";
+const ASSET_HUB_WS = "wss://paseo-asset-hub-next-rpc.polkadot.io";
 const DEV_SURI = "ensure coffee ripple degree senior grunt unit seek defense year spoon fix";
 const PACKAGE = "@staging/playground-registry";
 const VISIBILITY_PRIVATE = 0;
@@ -156,25 +157,44 @@ async function main(): Promise<void> {
   );
   (cdmJson as any).contracts[PACKAGE].abi = localAbi;
 
-  // Live-resolve the contract address from the on-chain CDM registry. Mirrors
-  // the UI's `ContractManager.fromLiveClient` call in src/utils/contracts.ts —
-  // a fresh `cdm deploy` is picked up automatically with no manual address
-  // bump in the smoke test. Strict-fail: if the registry call rejects, this
-  // throws (same trade-off as the UI: stale snapshot + new ABI is worse).
-  const manager = await ContractManager.fromLiveClient(
-    cdmJson,
-    client,
-    paseo_asset_hub,
-    {
+  // REGISTRY_ADDRESS override: point at a specific instance (e.g. a freshly
+  // instantiated contract whose on-chain registration is still pending/stuck).
+  // Skips live-resolution entirely — the override exists precisely because the
+  // on-chain registry lookup is unavailable, so running `fromLiveClient` would
+  // waste a round-trip (or hang). Uses the locally-patched ABI either way.
+  const overrideAddr = process.env.REGISTRY_ADDRESS as `0x${string}` | undefined;
+  let reg: any;
+  let address: string;
+  if (overrideAddr) {
+    const runtime = createContractRuntimeFromClient(client, paseo_asset_hub);
+    reg = createContract(runtime, overrideAddr, localAbi, {
       defaultSigner: signer,
       defaultOrigin: origin,
-      registryOrigin: origin,
-      libraries: [PACKAGE],
-    },
-  );
-  const reg: any = manager.getContract(PACKAGE);
+    });
+    address = overrideAddr;
+  } else {
+    // Live-resolve the contract address from the on-chain CDM registry. Mirrors
+    // the UI's `ContractManager.fromLiveClient` call in src/utils/contracts.ts —
+    // a fresh `cdm deploy` is picked up automatically with no manual address
+    // bump. Strict-fail: if the registry call rejects, this throws (same
+    // trade-off as the UI: stale snapshot + new ABI is worse).
+    const manager = await ContractManager.fromLiveClient(
+      cdmJson,
+      client,
+      paseo_asset_hub,
+      {
+        defaultSigner: signer,
+        defaultOrigin: origin,
+        registryOrigin: origin,
+        libraries: [PACKAGE],
+      },
+    );
+    reg = manager.getContract(PACKAGE);
+    address = manager.getAddress(PACKAGE);
+  }
 
-  console.log(`Contract (live-resolved): ${manager.getAddress(PACKAGE)}`);
+  const source = overrideAddr ? "REGISTRY_ADDRESS override" : "live-resolved";
+  console.log(`Contract: ${address} (${source})`);
   console.log(`reg.setBlacklisted exists: ${!!reg.setBlacklisted}`);
   console.log(`reg.getAppCount exists: ${!!reg.getAppCount}`);
   console.log(`Initial app_count on chain: ${(await reg.getAppCount.query()).value}`);
@@ -195,7 +215,7 @@ async function main(): Promise<void> {
   const DEPLOY_XP = XP_VALUES.deploy;
   const MOD_RECEIVED_XP = XP_VALUES.modReceived;
   const STAR_RECEIVED_XP = XP_VALUES.starReceived;
-  const USERNAME_BONUS_XP = XP_VALUES.username;
+  const IDENTITY_BONUS_XP = XP_VALUES.identity;
 
   // --- Scenario 1: Public publish gives DEPLOY_XP for the owner's 1st app --
   console.log(`\n[scenario 1] public publish → +${DEPLOY_XP} to owner (1st app)`);
@@ -225,18 +245,18 @@ async function main(): Promise<void> {
   await reg.publish.tx(D("beta"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_B }, NO_MODDED_FROM, true, false, TX_OPTS);
   check(`get_points(USER_B) == ${DEPLOY_XP}`, Number((await reg.getPoints.query(USER_B)).value), DEPLOY_XP);
 
-  // --- Scenario 3: Private publish gives 0 points --------------------------
-  console.log("\n[scenario 3] private publish → 0 points (not on playground)");
-  // Use a fresh fake address so we can assert exactly 0.
+  // --- Scenario 3: Private publish still gives deploy points ---------------
+  console.log(`\n[scenario 3] private publish → +${DEPLOY_XP} to owner`);
+  // Use a fresh fake address so we can assert exactly DEPLOY_XP.
   const USER_X = "0xc000000000000000000000000000000000000099";
   await reg.publish.tx(D("private"), FAKE_CID, VISIBILITY_PRIVATE, { isSome: true, value: USER_X }, NO_MODDED_FROM, false, false, TX_OPTS);
-  check("get_points(USER_X) == 0 (private)", Number((await reg.getPoints.query(USER_X)).value), 0);
+  check(`get_points(USER_X) == ${DEPLOY_XP} (private)`, Number((await reg.getPoints.query(USER_X)).value), DEPLOY_XP);
 
-  // --- Scenario 4: is_dev_signer=true suppresses all awards ----------------
-  console.log("\n[scenario 4] is_dev_signer=true → 0 points");
+  // --- Scenario 4: known dev signer suppresses all awards ------------------
+  console.log("\n[scenario 4] known dev signer publish → 0 points");
   const USER_Y = "0xc000000000000000000000000000000000000098";
   await reg.publish.tx(D("dev"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_Y }, NO_MODDED_FROM, true, true, TX_OPTS);
-  check("get_points(USER_Y) == 0 (is_dev_signer)", Number((await reg.getPoints.query(USER_Y)).value), 0);
+  check("get_points(USER_Y) == 0 (known dev signer)", Number((await reg.getPoints.query(USER_Y)).value), 0);
 
   // --- Scenario 5: Mod publish credits source owner ------------------------
   console.log(`\n[scenario 5] USER_E mods beta → USER_E +${DEPLOY_XP} (1st deploy), USER_B +${MOD_RECEIVED_XP} (mod credit)`);
@@ -294,13 +314,13 @@ async function main(): Promise<void> {
     );
   }
   // The page must include both USER_B and USER_E since they have positive
-  // scores, and must NOT include DEV (blacklisted) or USER_X/USER_Y (0
-  // score, evicted from index).
+  // scores, and must NOT include DEV (blacklisted) or USER_Y (0 score,
+  // evicted from index). USER_X is private but still scored.
   const accounts = new Set(top.map((e: any) => (e.account as string).toLowerCase()));
   check("leaderboard includes USER_B", accounts.has(USER_B), true);
   check("leaderboard includes USER_E", accounts.has(USER_E), true);
+  check("leaderboard includes private-publish USER_X", accounts.has(USER_X), true);
   check("leaderboard excludes blacklisted DEV", accounts.has(devH160.toLowerCase()), false);
-  check("leaderboard excludes zero-score USER_X", accounts.has(USER_X), false);
 
   // --- Scenario 8: get_point_breakdown ------------------------------------
   // Under #286 the bucket fields are no longer "XP per bucket" — `mod_points`
@@ -328,8 +348,8 @@ async function main(): Promise<void> {
     await reg.star.tx(D("self-app"), TX_OPTS);
   });
 
-  // --- Scenario 10: Star + unstar — XP is now ONE-WAY (#287) ---------------
-  console.log(`\n[scenario 10] DEV stars USER_B's beta → USER_B +${STAR_RECEIVED_XP}, unstar does NOT refund`);
+  // --- Scenario 10: Permanent star + double-star dedupe ----------------------
+  console.log(`\n[scenario 10] DEV stars USER_B's beta permanently → USER_B +${STAR_RECEIVED_XP}`);
   const beforeStar = Number((await reg.getPoints.query(USER_B)).value);
   await reg.star.tx(D("beta"), TX_OPTS);
   check("get_star_count(beta) == 1", Number((await reg.getStarCount.query(D("beta"))).value), 1);
@@ -343,27 +363,34 @@ async function main(): Promise<void> {
   await expectRevert("double-star reverts", async () => {
     await reg.star.tx(D("beta"), TX_OPTS);
   });
-
-  await reg.unstar.tx(D("beta"), TX_OPTS);
   check(
-    `USER_B keeps +${STAR_RECEIVED_XP} after unstar (one-way XP)`,
+    `USER_B stays at +${STAR_RECEIVED_XP} after rejected double-star`,
     Number((await reg.getPoints.query(USER_B)).value),
     beforeStar + STAR_RECEIVED_XP,
   );
-  check("get_star_count(beta) == 0 (unstar decremented count)", Number((await reg.getStarCount.query(D("beta"))).value), 0);
-  check("has_starred(DEV, beta) == false", (await reg.hasStarred.query(devH160, D("beta"))).value, false);
+  check("get_star_count(beta) == 1", Number((await reg.getStarCount.query(D("beta"))).value), 1);
+  check("has_starred(DEV, beta) == true", (await reg.hasStarred.query(devH160, D("beta"))).value, true);
 
-  // --- Scenario 11: Empty metadata_uri reverts -----------------------------
-  console.log("\n[scenario 11] empty metadata_uri rejected at publish");
+  // --- Scenario 11: Going private preserves social counts + points ---------
+  console.log("\n[scenario 11] set_visibility(PRIVATE) preserves counts and points");
+  const betaPointsBeforePrivate = Number((await reg.getPoints.query(USER_B)).value);
+  await reg.setVisibility.tx(D("beta"), VISIBILITY_PRIVATE, TX_OPTS);
+  check("get_visibility(beta) == PRIVATE", Number((await reg.getVisibility.query(D("beta"))).value), VISIBILITY_PRIVATE);
+  check("get_star_count(beta) preserved", Number((await reg.getStarCount.query(D("beta"))).value), 1);
+  check("get_mod_count(beta) preserved", Number((await reg.getModCount.query(D("beta"))).value), 1);
+  check("USER_B points unchanged after private flip", Number((await reg.getPoints.query(USER_B)).value), betaPointsBeforePrivate);
+
+  // --- Scenario 12: Empty metadata_uri reverts -----------------------------
+  console.log("\n[scenario 12] empty metadata_uri rejected at publish");
   await expectRevert("publish with empty metadata_uri reverts", async () => {
     await reg.publish.tx(D("empty"), "", VISIBILITY_PUBLIC, NO_OWNER, NO_MODDED_FROM, false, false, TX_OPTS);
   });
 
-  // --- Scenario 12: Unpublish-republish does NOT re-award launch points ----
+  // --- Scenario 13: Unpublish-republish does NOT re-award launch points ----
   // Regression guard for the farming vector: publish → +DEPLOY_XP →
   // unpublish (no refund) → publish again → 0 (launch_awarded persists
   // through unpublish so the second publish skips the launch + mod path).
-  console.log("\n[scenario 12] unpublish + republish does NOT re-award launch");
+  console.log("\n[scenario 13] unpublish + republish does NOT re-award launch");
   // USER_F also has to be per-run for the same reason as USER_A/B/E above.
   const USER_F = `0xf${runHex.slice(0, 38).padEnd(39, "4")}`.slice(0, 42).toLowerCase();
   const farmDomain = D("farm");
@@ -374,10 +401,11 @@ async function main(): Promise<void> {
   await reg.publish.tx(farmDomain, FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_F }, NO_MODDED_FROM, true, false, TX_OPTS);
   check(`USER_F stays at ${DEPLOY_XP} after republish (launch_awarded blocks)`, Number((await reg.getPoints.query(USER_F)).value), DEPLOY_XP);
 
-  // --- Scenario 13: 3rd+ deploy by the same owner pays 0 (#288 gate) ------
-  // Under the new model, only the owner's first two apps pay DEPLOY_XP. The
-  // third publish under the same owner still updates indices but credits 0.
-  console.log(`\n[scenario 13] USER_E's 3rd deploy → +0 (DEPLOY_REWARD_COUNT gate)`);
+  // --- Scenario 14: 4th+ deploy by the same owner pays 0 (#288 gate) ------
+  // Under the new model, the owner's first three apps pay DEPLOY_XP. The
+  // third publish now lands an award; the fourth under the same owner still
+  // updates indices but credits 0.
+  console.log(`\n[scenario 14] USER_E's 3rd deploy → +${DEPLOY_XP}; 4th → +0 (DEPLOY_REWARD_COUNT gate)`);
   const beforeThird = Number((await reg.getPoints.query(USER_E)).value);
   await reg.publish.tx(
     D("third"),
@@ -390,20 +418,36 @@ async function main(): Promise<void> {
     TX_OPTS,
   );
   check(
-    "USER_E unchanged after 3rd deploy (no XP past slot 2)",
+    `USER_E +${DEPLOY_XP} after 3rd deploy (slot 3 awarded)`,
     Number((await reg.getPoints.query(USER_E)).value),
-    beforeThird,
+    beforeThird + DEPLOY_XP,
   );
-  check("get_owner_app_count(USER_E) == 3 (index still advances)", Number((await reg.getOwnerAppCount.query(USER_E)).value), 3);
+  const beforeFourth = Number((await reg.getPoints.query(USER_E)).value);
+  await reg.publish.tx(
+    D("fourth"),
+    FAKE_CID,
+    VISIBILITY_PUBLIC,
+    { isSome: true, value: USER_E },
+    NO_MODDED_FROM,
+    false,
+    false,
+    TX_OPTS,
+  );
+  check(
+    "USER_E unchanged after 4th deploy (no XP past slot 3)",
+    Number((await reg.getPoints.query(USER_E)).value),
+    beforeFourth,
+  );
+  check("get_owner_app_count(USER_E) == 4 (index still advances)", Number((await reg.getOwnerAppCount.query(USER_E)).value), 4);
 
-  // --- Scenario 14: set_username flag dedupe under blacklist --------------
+  // --- Scenario 15: set_username flag dedupe under blacklist --------------
   // The smoke test only has DEV as a signer, and DEV is blacklisted so
   // `try_award` no-ops. What we CAN test: the `username_bonus_awarded` flag
   // is set on first call regardless of blacklist, and a later un-blacklist
   // + rename still doesn't pay out the bonus (the flag is sticky). The
-  // cross-account `+${USERNAME_BONUS_XP}` happy path needs a multi-signer
+  // cross-account `+${IDENTITY_BONUS_XP}` happy path needs a multi-signer
   // fixture this script doesn't yet have — TODO at the top of the file.
-  console.log(`\n[scenario 14] set_username flag persists across blacklist toggles + renames`);
+  console.log(`\n[scenario 15] set_username flag persists across blacklist toggles + renames`);
   const u1 = `dev-${RUN.slice(0, 8)}`.slice(0, 30).toLowerCase();
   const u2 = `${u1}-x`.slice(0, 30).toLowerCase();
   const u3 = `${u1}-y`.slice(0, 30).toLowerCase();
@@ -418,7 +462,27 @@ async function main(): Promise<void> {
   check("DEV unchanged after rename (un-blacklisted, flag already set)", Number((await reg.getPoints.query(devH160)).value), beforeUsername);
   // Restore blacklist for any downstream scenarios.
   await reg.setBlacklisted.tx([devH160], true, TX_OPTS);
-  void USERNAME_BONUS_XP; // referenced in comment, kept imported for the happy-path TODO
+  void IDENTITY_BONUS_XP; // referenced in comment, kept imported for the happy-path TODO
+
+  // --- Scenario 16: dev-signer publish does NOT consume a deploy-award slot
+  // Regression guard for the "dev signer eats the 100 XP slot" bug: the
+  // award gate counts awards actually GRANTED (`deploy_award_count`), not
+  // `owner_app_count`, so a developer who trials with the dev signer
+  // keeps all three first-deploy awards for their later real deploys. The
+  // cap still binds: 5 apps published, exactly 3 awarded.
+  console.log(`\n[scenario 16] dev-signer deploy doesn't consume the first-three-deploys slot`);
+  const USER_G = `0xd${runHex.slice(0, 38).padEnd(39, "5")}`.slice(0, 42).toLowerCase();
+  await reg.publish.tx(D("g-dev"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_G }, NO_MODDED_FROM, false, true, TX_OPTS);
+  check("USER_G == 0 after dev-signer publish", Number((await reg.getPoints.query(USER_G)).value), 0);
+  await reg.publish.tx(D("g-real-1"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_G }, NO_MODDED_FROM, false, false, TX_OPTS);
+  check(`USER_G == ${DEPLOY_XP} after 1st real publish (slot NOT eaten by dev deploy)`, Number((await reg.getPoints.query(USER_G)).value), DEPLOY_XP);
+  await reg.publish.tx(D("g-real-2"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_G }, NO_MODDED_FROM, false, false, TX_OPTS);
+  check(`USER_G == ${2 * DEPLOY_XP} after 2nd real publish`, Number((await reg.getPoints.query(USER_G)).value), 2 * DEPLOY_XP);
+  await reg.publish.tx(D("g-real-3"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_G }, NO_MODDED_FROM, false, false, TX_OPTS);
+  check(`USER_G == ${3 * DEPLOY_XP} after 3rd real publish`, Number((await reg.getPoints.query(USER_G)).value), 3 * DEPLOY_XP);
+  await reg.publish.tx(D("g-real-4"), FAKE_CID, VISIBILITY_PUBLIC, { isSome: true, value: USER_G }, NO_MODDED_FROM, false, false, TX_OPTS);
+  check(`USER_G stays ${3 * DEPLOY_XP} after 4th real publish (cap binds on awards granted)`, Number((await reg.getPoints.query(USER_G)).value), 3 * DEPLOY_XP);
+  check("get_owner_app_count(USER_G) == 5 (indices advance independently)", Number((await reg.getOwnerAppCount.query(USER_G)).value), 5);
 
   // --- Wrap up -------------------------------------------------------------
   console.log(`\n------------------------------------------`);

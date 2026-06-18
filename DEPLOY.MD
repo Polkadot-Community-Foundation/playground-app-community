@@ -1,289 +1,206 @@
 # Deploying playground.dot
 
-A three-tab quest platform for the Web3 Summit Developer Lab — an on-chain
-registry contract (`@w3s/playground-registry`) + a frontend bundle on Bulletin
-under `playground.dot`.
+Deploy the playground registry contract and the frontend. This is one repo in the broader Polkadot stack deployment — it assumes the earlier stack steps are complete:
 
-> **Targets.** Two chains are supported:
-> - **Summit (W3S)** — the production target. Contract leg via `cdm deploy -n w3s`
->   on Summit Asset Hub; SPA leg via `polkadot-app-deploy --env summit` on Summit
->   Bulletin. The full operator procedure is the **Summit VM runbook**
->   (`summit-deployer-skills/guides/PLAYGROUND_SUMMIT_VM_RUNBOOK.md`); the
->   `## Deploying to Summit` section below is the in-repo summary.
-> - **Paseo Next v2** — staging/preview (CI PR previews, the original `pnpm deploy`).
->
-> CI auto-deploys the **SPA** to Summit `playground.dot` on every merge to `main`
-> (`deploy-frontend.yml`). The **contract** leg is a deliberate manual step
-> (greenfield, one-time) — never auto-deployed.
+- The CDM ContractRegistry is deployed on the target chain and its address is set in the installed `cdm` CLI (see `DEPLOY_DOC.md` in [contract-dependency-manager](https://github.com/paritytech/contract-dependency-manager)).
+- You have a funded deployer SURI on the target chain — the same one used for the earlier stack steps. It's referred to as `$DEPLOY_SURI` below and passed directly to each command; no account setup is needed.
 
-## Deploying to Summit (W3S)
+`<chain>` is one of the CDM presets — `paseo`, `w3s`, `local` (plus `polkadot`, `custom`). Pick the one matching your target environment and use it consistently throughout.
 
-The production target. Run on the deployment instance (not a laptop/CI) — it
-needs the funded keys + the PVM toolchain. Full step-by-step with verification:
-`summit-deployer-skills/guides/PLAYGROUND_SUMMIT_VM_RUNBOOK.md`. Summary:
+Requires Node 22, pnpm, Rust nightly with `rust-src`.
 
-**Prereqs already satisfied (external):** the Summit CDM `ContractRegistry`
-(`0xa5747e60ae27f93e92019e4021abfc4957050141`) and the `contract-developer-tools`
-system contracts (`@mock/reputation`, `@polkadot/contexts`) are deployed and
-registered in it. `cdm.json` `registry` already points at the Summit registry.
+## 0. Ensure CDM / Rust tooling is installed.
 
-**Accounts (reuse the established Summit keys):**
-- **Contract leg** deployer/sudo = the CDM/ctdt **hdkd** deployer
-  `5Hn6AMFkiAyGFgWCShqAdXFax87uknHa5YXCZmiabFidohQy` — funded + Revive-mapped on
-  Summit AH. (Derivation differs by library — fund the *hdkd*-derived account,
-  not a keyring-named one; see the CDM guide Lesson 1.)
-- **SPA leg** uploader + `playground.dot` owner = `5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f`
-  — Bulletin-authorized + funded; the canonical PCF SPA uploader.
-
-```bash
-# 1. Contract leg — build + deploy @w3s/playground-registry to Summit AH,
-#    publish ABI to Bulletin, register in the Summit CDM registry.
-#    Resolves @mock/reputation from the registry at instantiation.
-cdm account map -n w3s          # one-time Revive mapping (caught if already mapped)
-cdm account bal -n w3s          # confirm funds
-pnpm deploy:w3s                 # = cdm deploy -n w3s --suri "$MNEMONIC"
-
-# 2. Authorise the new registry as operator on the playground.dot context.
-ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
-  MNEMONIC="<5Hn6AMFk… suri>" pnpm tsx scripts/register-context.ts add
-
-# 3. Commit the rewritten cdm.json (new @w3s/playground-registry address) so the
-#    SPA build embeds it. Merging to main auto-deploys the SPA (step 4 in CI).
-git add cdm.json && git commit -m "chore: deploy @w3s/playground-registry to Summit" && git push
-
-# 4. SPA leg — build + publish to Summit Bulletin, bind playground.dot.
-#    (CI does this automatically on merge to main; this is the manual equivalent.)
-pnpm build:frontend
-MNEMONIC="<5Fk8… suri>" pnpm deploy:frontend:summit
-
-# 5. Publish the playground app's own registry metadata entry (manual; CI-disabled).
-ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io \
-  BULLETIN_WS_URL=wss://summit-bulletin-rpc.polkadot.io \
-  MNEMONIC="<5Fk8… suri>" pnpm tsx scripts/publish-metadata.ts playground.dot
+If you haven't already, install cdm
+```
+curl -fsSL https://raw.githubusercontent.com/paritytech/contract-dependency-manager/main/install.sh | bash
 ```
 
-**Verify (Summit):** point the diagnostic scripts at Summit via env overrides —
-`ASSET_HUB_WS_URL=wss://summit-asset-hub-rpc.polkadot.io pnpm tsx scripts/verify-contracts.ts`,
-`git diff cdm.json` (new address, bumped version), then
-`curl -sSI https://playground.dot.li | head -1`. The on-chain assurance ladder
-(L1–L8) is in the runbook. Notes: never pass `--publish` on Summit (no Publisher);
-use `--mnemonic` not `--suri` for the SPA leg (direct signer); `src/config.ts`
-`CHAIN` stays `"paseo"` (the host injects Summit at runtime — see the comment there).
-
----
-
-## Prerequisites
-
-> The section below targets **Paseo Next v2** (staging/preview). For Summit use
-> the section above.
-
-- pnpm 10.17.1 (check: `pnpm --version`)
-- Node 22.x (check: `node --version`)
-- Rust nightly with `rust-src` (check: `rustup show active-toolchain` shows nightly; `rustup component list --installed | grep rust-src`)
-- `cdm` CLI (check: `cdm --version`). Install:
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/paritytech/contract-dependency-manager/main/install.sh | bash
-  ```
-- `~/.cdm/accounts.json` populated for `paseo`, mnemonic funded with PAS on Paseo Asset Hub, and account-mapped:
-  ```bash
-  cdm init                       # only if accounts.json doesn't exist
-  cdm account map -n paseo
-  cdm account bal -n paseo       # confirm balance > 5 PAS
-  ```
-- For frontend deploys: the same mnemonic must own `playground.dot`.
+CDM installs the latest stable [cargo-pvm-contract](https://github.com/paritytech/cargo-pvm-contract). This repository uses an experimental branch of cargo-pvm-contract for its rust contracts. So before building/deploying the contract, install the experimental cargo-pvm-contract:
+```
+HOST_TARGET="$(rustc -vV | awk '/^host:/ {print $2}')"
+cargo install --force --locked \
+  --target "$HOST_TARGET" \
+  --git https://github.com/paritytech/cargo-pvm-contract.git \
+  --branch charles/cdm-integration \
+  cargo-pvm-contract
+```
 
 ## 1. Get the code
 
 ```bash
-git clone https://github.com/paritytech/playground-app.git
-cd playground-app
+git clone https://github.com/paritytech/playground-app-community.git
+cd playground-app-community
 git checkout main
 pnpm install --frozen-lockfile
-pnpm typecheck && pnpm lint:license
 ```
 
-## 2. Configure
+## 2. Deploy the registry contract
 
-No configuration is required to run a default deploy against Paseo Next v2. Override the items below only when targeting a different chain, signer, or telemetry project.
+```bash
+cdm deploy -n <chain> --suri "$DEPLOY_SURI"
+```
 
-### Build-time (frontend, `VITE_*`)
+Builds the contract, instantiates it on Asset Hub, publishes the ABI to Bulletin, and registers it in CDM.
+
+> ⚠️ **Redeploys are not in-place.** `cdm deploy` always creates a new contract address with empty storage — there is no upgrade path. On a fresh chain that's fine. To replace a **live** registry without losing state (apps, pins, points, social counts, usernames, lineage), snapshot it *before* deploying and replay afterward:
+> ```bash
+> pnpm tsx scripts/export-registry-state.ts --out migration/snapshot.json          # BEFORE cdm deploy
+> MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/import-registry-state.ts migration/snapshot.json   # AFTER deploy + cdm i
+> ```
+
+Then install the freshly deployed registry — this pulls the new address/version/ABI into the local `cdm.json`, which both the scripts below and the frontend build read from:
+
+```bash
+cdm i -n <chain> @w3s/playground-registry
+```
+
+## 3. Contract Configurations
+
+### Blacklist
+
+The registry keeps a points-blacklist: accounts on it silently no-op out of `award_points`, so they can never appear on the leaderboard (defense-in-depth for non-awardable recipients). On a fresh deploy you must seed it once with the well-known dev/test signers — the project deploy signer, the `DEV_PHRASE` bare root used by `bulletin-deploy`, `//Alice`, and `//Bob` (the canonical list lives in [`DEV_ACCOUNTS`](scripts/_lib.ts)). Otherwise those accounts would accrue XP from test publishes.
+
+```bash
+MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/blacklist-accounts.ts
+```
+
+Pass extra H160 or SS58 addresses as args to blacklist them too:
+
+```bash
+MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/blacklist-accounts.ts <ADDRESS> <ADDRESS>
+```
+
+The call is sudo/admin-gated and idempotent — re-running is a cheap no-op. If you populated this registry via the migration in step 2 (`import-registry-state.ts`), the same set was already seeded as that script's step 0, so you can skip this.
+
+### Anti-spam
+
+In order to stop users from spamming with randomly generated accounts, you have to make a PR to Parity's individuality repository. To configure anti-spam for a new environment simply update [this list in `runtimes/next-asset-hub-paseo/src/auth_required_filter.rs`](https://github.com/paritytech/individuality/blob/cd22364dbca446ac421dd02b5fb37d113a3806a0/runtimes/next-asset-hub-paseo/src/auth_required_filter.rs#L27)
+
+```rs
+pub const PLAYGROUND_REGISTRY_ADDRESSES: &[H160] = &[
+	H160(hex_literal::hex!("eb814656e2466b5a8e613f8121d57c75f684a35d")),
+	H160(hex_literal::hex!("0000000000000000000000000000000000000000")), // W3S Summit placeholder.
+];
+```
+
+with the appropriate address for the `@w3s/playground-registry` contract, which was just deployed in the prior step. Then open a PR against the [individuality](https://github.com/paritytech/individuality/tree/main) repository.
+
+You can grab the `@w3s/playground-registry` address by visiting `contracts.dot/#/package/@w3s/playground-registry` and copying the contract address from there.
+
+## 4. Deploy the frontend
+
+Frontend deploys use [polkadot-app-deploy](https://github.com/paritytech/polkadot-app-deploy):
+
+```bash
+npm install -g @parity/polkadot-app-deploy
+polkadot-app-deploy --list-environments    # pick the environment matching your chain (e.g. paseo-next-v2, summit)
+```
+
+```bash
+VITE_SENTRY_DSN="" pnpm build:frontend                      # Build with sentry disabled entirely
+MNEMONIC="$DEPLOY_SURI" polkadot-app-deploy --publish --env <env> ./dist playground.dot
+```
+
+On a fresh environment the deploy registers `playground.dot`; on re-deploys the mnemonic must own the name. The site is served at `https://playground.dot.li`.
+
+### Build-time configuration (`VITE_*`)
+
+All optional — a default `pnpm build:frontend` against the standard environment needs none of these. They're read at build time only ([src/config.ts](src/config.ts), [src/sentry.ts](src/sentry.ts)), so set them inline on the build command (e.g. `VITE_REVX_URL=… pnpm build:frontend`), not on `polkadot-app-deploy`.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `VITE_VERSION` | `dev` | Release id (Sentry + about-screen). CI sets short SHA or tag. Local prod builds with this unset deliberately skip Sentry init. |
-| `VITE_BUILD_TIME` | empty | UTC ISO timestamp; display only. CI sets it. |
-| `VITE_SENTRY_DSN` | hardcoded EU project DSN in [src/sentry.ts](src/sentry.ts) | Override to route elsewhere; set empty to disable Sentry. |
-| `VITE_SENTRY_ENV` | Vite `MODE` | Sentry env tag (`production`, `preview-<PR#>`, `e2e`, …). |
+| `VITE_ENVIRONMENT` | `paseo` | Network the whole build targets — Asset Hub, Bulletin, and the People chain move together ([src/config.ts](src/config.ts)). Supported: `paseo`, `summit`. Must match the chain you deployed the registry to (step 2) and the `polkadot-app-deploy --env` (step 4). An explicitly-set unknown value fails the build loudly rather than silently shipping the wrong chain. See note below. |
+| `VITE_VERSION` | `dev` | Release id — Sentry release tag + about screen. CI sets the short SHA / tag. Unset in a local prod build deliberately skips Sentry init (see below). |
+| `VITE_BUILD_TIME` | empty | UTC ISO build timestamp; display only. CI sets it. |
+| `VITE_SENTRY_DSN` | hardcoded DE/EU DSN in [src/sentry.ts](src/sentry.ts) | Route telemetry to a different project, or set empty to disable — see Telemetry below. |
+| `VITE_SENTRY_ENV` | Vite `MODE` | Sentry environment tag (`production`, `preview-<pr>`, `e2e`, …). |
 | `VITE_SENTRY_TAG` | unset | Synthetic-traffic label so dashboards can exclude E2E runs. Set by Playwright. |
 | `VITE_REVX_URL` | `https://stg.revx.dev` | Base URL for the RevX editor deep-link. |
-| `VITE_PLAYGROUND_URL` | `https://playground.dot.li` | Canonical share-link host (so links work outside the host container). |
-| `VITE_PLAYGROUND_DOTNS_ID` | derived from `window.location.hostname` | DotNS id the host derives this app's product account from. Host enforces strict equality — only override if you know what id is expected. |
+| `VITE_PLAYGROUND_URL` | `https://playground.dot.li` | Canonical share-link host, so links resolve outside the host container. |
+| `VITE_PLAYGROUND_DOTNS_ID` | derived from `window.location.hostname` | DotNS id the host derives the product account from. The host enforces strict equality — override only if you know the expected id. |
 | `VITE_INSTALL_CMD` | `curl … playground-cli/main/install.sh \| bash` | One-line CLI install command shown in the UI. |
-| `VITE_CLI_COMMAND` | `pg` | Name of the CLI binary in copyable commands. |
-| `VITE_NO_CODE_APP_DOMAIN` | `hello-playground20.dot` | Bare `.dot` domain of the no-code starter app surfaced on the Playground tab + IslandPortal. Call sites append `.li` for the Bulletin gateway URL. |
-| `VITE_PLAYGROUND_REGISTRY_PACKAGE` | `@w3s/playground-registry` | Set to `@staging/playground-registry` in `.env.local` to UI-test against staging. Never set on a prod build. |
+| `VITE_CLI_COMMAND` | `pg` | CLI binary name in copyable commands. |
+| `VITE_NO_CODE_APP_DOMAIN` | `hello-playground20.dot` | Bare `.dot` domain of the no-code starter surfaced on the Playground tab; call sites append `.li` for the gateway URL. |
+| `VITE_PLAYGROUND_REGISTRY_PACKAGE` | `@w3s/playground-registry` | Set to `@staging/playground-registry` in `.env.local` to UI-test against a staging deploy. Never set on a prod build. |
+| `VITE_DEV_FUNDER_MNEMONIC` | unset (drip skipped) | **Dev / testnet only.** Bare mnemonic of a funded account that drips 100 PAS to each freshly-connected product account during "Collect my resources" — see Dev funder below. ⚠️ Baked verbatim into the bundle; leave unset on any public / production build. |
 
+### Selecting the network (`VITE_ENVIRONMENT`)
 
-### Script env vars
+`VITE_ENVIRONMENT` picks which chain descriptors (Asset Hub + Bulletin + People/individuality) the frontend bundles. The default `paseo` is the standard environment; set `summit` for a summit build:
 
-| Var | Default | Used by | Purpose |
-|---|---|---|---|
-| `MNEMONIC` | — (required) | `register-context.ts`, `import-registry-state.ts`, `publish-metadata.ts`, `bulletin-deploy` | Signer mnemonic. Role depends on the script: context owner / registry sudo / DotNS owner. |
-| `ASSET_HUB_WS_URL` | `wss://paseo-asset-hub-next-rpc.polkadot.io` | every diagnostic script (`assetHubWsUrl()` in [scripts/_lib.ts](scripts/_lib.ts)) | Asset Hub WS endpoint. |
+```bash
+VITE_ENVIRONMENT=summit pnpm build:frontend
+```
 
-### CI secrets
+Three naming spaces line up here — keep them consistent:
 
-| Secret | Used by | Purpose |
+| Step | Selector | Example values |
 |---|---|---|
-| `MNEMONIC` | [.github/workflows/deploy-contracts.yml](.github/workflows/deploy-contracts.yml), [.github/workflows/release.yml](.github/workflows/release.yml) | The single deploy mnemonic — contract sudo / deployer **and** DotNS owner of `playground.dot`. Signs `cdm deploy`, `register-context.ts add`, `import-registry-state.ts`, and production frontend deploys on tag push. |
-| `PLAYGROUND_CLI_DISPATCH_TOKEN` | [.github/workflows/deploy-contracts.yml](.github/workflows/deploy-contracts.yml) | Cross-repo `repository_dispatch` token to trigger the CLI's contract-manifest patch release. |
+| Contract deploy (step 2) | CDM `-n <chain>` | `paseo`, `w3s`, `summit` |
+| Frontend build | `VITE_ENVIRONMENT` | `paseo`, `summit` |
+| Frontend deploy (step 4) | `polkadot-app-deploy --env` | `paseo-next-v2`, `summit` |
 
-### `cdm.json` (top-level keys)
+The registry contract address is **not** pinned in the bundle — it's resolved at boot from the on-chain CDM meta-registry whose address lives in `cdm.json` ([the `registry` field](cdm.json)). That field is set by the `cdm i -n <chain> @w3s/playground-registry` in step 2, so `VITE_ENVIRONMENT` must name the **same chain** you ran `cdm i` against, or the frontend will look for the registry on the wrong network and the Apps grid will come up empty.
 
-Flat — keyed by package name, no target nesting, no endpoint URLs.
+### Dev funder (`VITE_DEV_FUNDER_MNEMONIC`)
 
-| Key | Purpose |
-|---|---|
-| `registry` | Address of the on-chain CDM meta-registry. Written by `cdm deploy --bootstrap`. |
-| `dependencies` | `{ "@org/pkg": "latest" \| <version> }` — what `cdm install` should resolve. |
-| `contracts` | `{ "@org/pkg": { version, address, abi, metadataCid } }` — snapshot the frontend builds against. |
-
-## 3. Deploy
-
-### First-time on an existing chain (e.g. Paseo Next v2)
+A temporary stand-in for the production PGAS claim path (a runtime-V5 extrinsic the Polkadot mobile app issues). On a dev / testnet build you can have the app top up each freshly-connected product account so prototype sessions can sign without a manual faucet step. It is handled in `attemptDevFunderTopUp` ([src/utils/contracts.ts](src/utils/contracts.ts)) and runs as the last step of "Collect my resources" (`provisionResources`).
+Preferably use same mnemonic as in playground-cli.
 
 ```bash
-# Build → instantiate on Asset Hub → publish ABI to Bulletin → register in CDM.
-# Rewrites cdm.json with the new address/version/ABI.
-pnpm deploy
-
-# Authorise the new registry as an operator on the playground.dot context.
-MNEMONIC="<context-owner-mnemonic>" pnpm tsx scripts/register-context.ts add
-
-# Commit so the frontend (which reads cdm.json at build time) picks up the new address.
-git add cdm.json
-git commit -m "chore: deploy registry"
-git push
-
-# Build and publish the frontend bundle to Bulletin.
-pnpm build:frontend
-pnpm deploy:frontend
+VITE_DEV_FUNDER_MNEMONIC="word word … word" pnpm build:frontend   # dev/testnet only
 ```
 
-### Fresh chain (bootstrap from zero)
+- **Bare mnemonic**, derived at path `""` (so the funder is that mnemonic's root account — *not* `//Alice`). Must hold native PAS on the target chain.
+- **Fallback to `//Alice`** when the configured funder is the recipient itself or is short on funds (`free < 101 PAS`). With no configured funder the drip is skipped entirely — including the Alice fallback.
+- **Only the token transfer is gated** by this var; the host allowance requests (ChainSubmit / SmartContract / Bulletin / Preimage) always run regardless.
+- ⚠️ **Security:** like every `VITE_*` value this is **inlined verbatim into the client JS bundle** at build time, so anyone who loads the build can extract it. Use only a **low-value, disposable testnet key**, and **never set it on a public / production build** — unset is the correct production default (real users fund via the mobile PGAS claim path). Don't wire it into the production deploy workflow; if you need it for a staging build, inject it as a CI secret on that build only.
+
+### Telemetry (Sentry)
+
+The frontend ships with Sentry error/performance reporting on by default — the DSN is hardcoded in [src/sentry.ts](src/sentry.ts) (publish-only, public-safe). The DSN is baked into the bundle at **build** time, so to change it, set `VITE_SENTRY_DSN` on the `pnpm build:frontend` step above — in place of the plain build command, *not* on `polkadot-app-deploy` (which only ships the already-built `./dist`):
 
 ```bash
-cdm init
-# fund the printed account on the new chain, then:
-cdm account map -n <network>
-cdm deploy -n <network> --bootstrap                            # deploys the CDM meta-registry
-cdm i -n <network> @polkadot/contexts @mock/reputation         # install system contracts
-pnpm deploy                                                     # deploy playground-registry
-MNEMONIC="<deployer-mnemonic>" pnpm tsx scripts/register-context.ts   # signer becomes owner + initial operator
+VITE_SENTRY_DSN="" pnpm build:frontend                      # disable Sentry entirely
+VITE_SENTRY_DSN="<your-project-dsn>" pnpm build:frontend    # send to a different project
 ```
 
-### Publish the playground app's own metadata entry
+Then run the same `polkadot-app-deploy --env <env> ./dist playground.dot` command to ship it.
+
+(Also: a local `pnpm build:frontend` with no `VITE_VERSION` set skips Sentry init regardless, so stray local bundles never report to the production project.)
+
+## Verify
 
 ```bash
-MNEMONIC="<DotNS-owner-mnemonic>" pnpm tsx scripts/publish-metadata.ts playground.dot
+pnpm tsx scripts/verify-contracts.ts            # every cdm.json contract is instantiated on-chain
+curl -sSI https://playground.dot.li | head -1   # 200 OK
 ```
 
-Uploads the icon + `AppMetadata` JSON to Bulletin and calls `registry.publish(...)` with `is_dev_signer=true`. Currently manual — disabled in CI pending [product-sdk#102](https://github.com/paritytech/product-sdk/issues/102).
+Open `https://playground.dot.li` — the Apps tab loads, the Leaderboard renders, Profile shows your account.
 
-### Set up admins and pin the canonical apps
+### 🛑 **STOP** 🛑
+The rest of the steps assume you have already deployed sample apps to the playground
 
-By default, every owner-restricted operation (`pin`/`unpin`, `add_admin`/`remove_admin`, `set_blacklisted`, `import_*`, `set_frozen`) is gated on the **sudo account that signed `cdm deploy`** — that's the same mnemonic stored in `~/.cdm/accounts.json` under the active chain preset (e.g. `paseo`). For day-to-day registry curation, grant admin to one or more additional accounts and pin the apps that should appear at the top of the Apps grid.
+## 5. **AFTER DEPLOYING SAMPLE APPS** Registry setup
 
-Both scripts read the signer from the `MNEMONIC` env var. The same one-liner unpacks the deploy mnemonic from your cdm config — reuse it for both calls below, or substitute your own mnemonic string:
-
-```bash
-SUDO_MNEMONIC="$(node -e "process.stdout.write(require(require('os').homedir()+'/.cdm/accounts.json').paseo.mnemonic)")"
-```
-
-**Promote admins.** Admin promotion requires **sudo only**. Admins gained this way can call `pin`/`unpin` and similar operational methods but cannot themselves `add_admin`/`remove_admin` — those stay sudo-only:
+All sudo-gated — sign with the mnemonic that ran `cdm deploy`:
 
 ```bash
-MNEMONIC="$SUDO_MNEMONIC" pnpm tsx scripts/add-admin.ts <SS58_ADDRESS>
-```
 
-**Pin the canonical apps.** The frontend renders pinned apps at the top of the Apps grid. The canonical set is the structured tutorial, the sample apps, and the empty/starter template. Either sudo or any account you've added as admin can sign this — using `$SUDO_MNEMONIC` is fine for the first-pin pass. The script is idempotent — already-pinned domains are skipped:
 
-```bash
-MNEMONIC="$SUDO_MNEMONIC" pnpm tsx scripts/pin-apps.ts \
+# Grant day-to-day admin (pin/unpin etc.) to curator accounts — add_admin itself stays sudo-only
+MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/add-admin.ts <SS58_ADDRESS>
+
+# Pin the canonical apps (tutorial, sample apps, starter). Idempotent — re-run as apps get published.
+MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/pin-apps.ts \
+  playground-tutorial.dot \
   rock-paper-scissors.dot \
   empty-starter.dot \
-  feedback-board.dot
-  # ... add each sample app's .dot domain as it's deployed
+  feedback-board.dot \
+  hello-playground20.dot
 ```
 
-Domains that haven't been `publish`'d yet fail with `AppNotFound` — pin them after they appear in the registry.
+> **Check the actual domains before pinning.** The list above is illustrative — it must match (a) the `.dot` domains your sample apps were really deployed under, and (b) the frontend constants in the build you shipped. [src/config.ts](src/config.ts) hardcodes `TUTORIAL_DOMAIN` (`playground-tutorial.dot`) and `NO_CODE_APP_DOMAIN` (`hello-playground20.dot`); `TUTORIAL_DOMAIN` in particular **must** be pinned in the registry this build reads, or the tutorial CTA opens to an empty App Detail Panel. Adjust the list to whatever those values actually are for your deploy.
 
-The script is mostly for the initial bulk-pin pass after a fresh deploy. Once admins are set up, they can also pin or unpin individual apps from the App Detail Page in the playground-app UI.
-
-## 4. Redeploy: transferring apps to a new registry
-
-`cdm deploy` always produces a **new contract address with empty storage** — there is no in-place upgrade path. When redeploying a live chain, snapshot the old registry first and replay the state into the new one. The export and import scripts are idempotent; partial failures are safe to re-run.
-
-```bash
-# 1. Snapshot the live registry BEFORE redeploying.
-pnpm tsx scripts/export-registry-state.ts --out migration/snapshot.json
-
-# 2. Run the deploy from § 3 above.
-
-# 3. Replay state into the new registry. Sudo = whoever ran `cdm deploy`.
-MNEMONIC="<deployer-mnemonic>" pnpm tsx scripts/import-registry-state.ts migration/snapshot.json
-```
-
-What gets carried: apps, pinned entries, points, social counts, usernames, and lineage. The import script auto-blacklists dev accounts and reconciles phantom leaderboard entries — internals are in [scripts/import-registry-state.ts](scripts/import-registry-state.ts).
-
-In CI, the **Deploy Contracts** workflow (`workflow_dispatch`) chains export + deploy + register-context-add + import + commit `cdm.json`, then triggers **Deploy Frontend** via `workflow_run`. Production goes via `v*.*.*` tag push → [.github/workflows/release.yml](.github/workflows/release.yml).
-
-## 5. Verify
-
-Pre-flight (before pulling the trigger):
-
-```bash
-pnpm tsx scripts/measure-deploy-cost.ts          # dry-run: gas + storage deposit; confirms deployer balance covers it
-pnpm tsx scripts/check-revive-mapping.ts <ss58>  # confirms the deployer is account-mapped on Revive
-```
-
-Contracts (after `pnpm deploy`):
-
-```bash
-pnpm tsx scripts/verify-contracts.ts             # every cdm.json contract + the CDM meta-registry is instantiated
-git diff cdm.json                                # new address + bumped version present
-pnpm tsx scripts/smoke-test-points.ts            # end-to-end points/blacklist/lineage (45/45 expected; staging)
-pnpm tsx scripts/smoke-test-usernames.ts         # username set / clear / rename / availability
-pnpm tsx scripts/check-migration.ts              # sudo guards on every import method (CRITICAL)
-```
-
-Migration parity (after `import-registry-state.ts`):
-
-```bash
-# Re-export from the new registry, then diff against the pre-deploy snapshot.
-# Exits 0 on parity, 1 on hard diff.
-pnpm tsx scripts/export-registry-state.ts --out migration/after.json
-pnpm tsx scripts/diff-registry-state.ts migration/snapshot.json migration/after.json
-```
-
-Frontend (after `pnpm deploy:frontend`):
-
-```bash
-curl -sSI https://playground.dot.li | head -1    # 200 OK
-```
-
-- Open `https://playground.dot.li` — Apps tab loads with the expected count, Leaderboard renders, Profile shows your account.
-- Open `https://playground.dot.li/?test-sentry=1` and click through — events should appear in Sentry under the new release within ~1 min, tagged with the right `VITE_VERSION` and `VITE_SENTRY_ENV`.
-- Spot-check the playground app's own entry on `/apps` — confirms `publish-metadata.ts` ran (the entry won't appear if it was skipped).
-
-## Troubleshooting
-
-| You see | Fix |
-|---|---|
-| `MNEMONIC env var required` | Export the mnemonic before running the script — see the role table under Configure → Script env vars to pick the right one. |
-| `Caller 0x… is not sudo.` (during `import-registry-state.ts`) | The `MNEMONIC` you used isn't the new registry's sudo. Sudo = whoever ran `cdm deploy`. Re-run from that mnemonic. |
-| `Cannot read properties of undefined (reading 'tx')` in the frontend | The deployed contract doesn't expose a method the frontend calls. Either `cdm.json` is stale (re-pull `main` after a deploy) or you're pointing the UI at `@staging` without setting `VITE_PLAYGROUND_REGISTRY_PACKAGE=@staging/playground-registry` in `.env.local`. |
-| `bulletin-deploy` exits with "domain not owned by signer" | Your `MNEMONIC` doesn't own `playground.dot`. Set the deploy mnemonic correctly or have the domain owner run the deploy. |
-| `Revive.OutOfGas` mid-migration | An auto-estimator undershoot on fresh storage. The script already pins gas at 1.5T ref_time; re-run — it's idempotent and resumes at the failed entry. |
-| `[contracts] No origin configured` warning spam | Diagnostic scripts dry-run as `origin` of the signer. Make sure the mnemonic derives correctly (`seedToAccount(MNEMONIC, "")` — no path). |
-| Sentry dashboard shows `playground-app@dev` events from a deploy | A local `pnpm build:frontend` shipped without `VITE_VERSION` set. Always set `VITE_VERSION` in CI; local prod builds are deliberately blocked from emitting. |
+Domains that haven't been published yet fail with `AppNotFound` — pin them after they appear in the registry.

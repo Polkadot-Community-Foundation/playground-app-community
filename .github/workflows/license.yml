@@ -12,7 +12,7 @@ on:
                 options:
                     - parity-default
                     - ubuntu-latest
-                default: ubuntu-latest
+                default: parity-default
 
 permissions:
     contents: read
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
     check:
-        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+        runs-on: ${{ inputs.runner || 'parity-default' }}
         steps:
             - uses: actions/checkout@v4
             - run: ./scripts/check-license-headers.sh

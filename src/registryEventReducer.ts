@@ -84,8 +84,20 @@ export interface RegistryEventDeps {
   getCurrentUserAddr(): string | null | undefined;
   /** Re-fetch star + mod counts for a domain (used for Star/Mod events). */
   refreshSocialCounts(domain: string): void;
-  /** Re-fetch the leaderboard (top builders) and any cached per-account totals. */
+  /**
+   * Re-fetch the leaderboard (top builders). Per-account surfaces (island
+   * XP, task checks) refresh separately, scoped to the current user's own
+   * events — see the subscription in App.tsx.
+   */
   refreshLeaderboard(): void;
+  /**
+   * Re-read verified identities in every mounted hook. The identity events
+   * (IdentityLinked / IdentityCleared / IdentityBonusAwarded) carry the
+   * recipient but the per-account display reads aren't event-driven, so a
+   * broadcast revalidation is the cheapest correct reaction — it's what lets a
+   * reveal/clear done elsewhere (CLI, second tab) show up without a reload.
+   */
+  refreshIdentities(): void;
 }
 
 /**
@@ -122,11 +134,6 @@ export function handleRegistryEvent(
     case "Unpinned":
       deps.fetchPinnedApps();
       return;
-    // The contract still emits Rated / RatingRemoved while rate_app remains,
-    // but the UI replaced ratings with star toggles — drop on the floor.
-    case "Rated":
-    case "RatingRemoved":
-      return;
     // Star toggles: refresh the per-domain counts + the leaderboard. The
     // recipient's per-account total is rolled into the leaderboard fetch.
     case "StarPointAwarded":
@@ -149,17 +156,16 @@ export function handleRegistryEvent(
     case "ModdablePointAwarded":
       deps.refreshLeaderboard();
       return;
-    // Username bonus (+25 XP on first set_username) — refresh the leaderboard
-    // so the points total ticks and the IslandPortal counter updates.
-    case "UsernameBonusAwarded":
+    // Verified-identity events: a reveal/clear (and the one-time first-reveal
+    // bonus) changes the displayed name and, for the bonus, the XP total.
+    // Refresh the leaderboard (its batch root-account read re-resolves names
+    // and picks up the score tick) and broadcast-refresh the per-account
+    // identity hooks so an own/second-tab reveal shows up without a reload.
+    case "IdentityLinked":
+    case "IdentityCleared":
+    case "IdentityBonusAwarded":
       deps.refreshLeaderboard();
-      return;
-    // Username events don't identify the account in the raw payload, so the
-    // cheapest correct reaction is to refresh the leaderboard page if mounted;
-    // its username batch read will pick up the new names.
-    case "UsernameSet":
-    case "UsernameCleared":
-      deps.refreshLeaderboard();
+      deps.refreshIdentities();
       return;
   }
 }

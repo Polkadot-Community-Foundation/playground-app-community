@@ -242,9 +242,15 @@ export async function runPublishFlow(
     return { ok: true, metadataCid, fullDomain };
   } catch (err: unknown) {
     reporter.status("error");
-    reporter.errorMessage(
-      err instanceof Error ? err.message : "Something went wrong",
-    );
+    // InsufficientFundsError / NotABuilderError are soft: the guard already
+    // routed the user to a faucet top-up or the Become-a-builder flow, so don't
+    // surface a hard error message for them.
+    const soft =
+      err instanceof Error &&
+      (err.name === "InsufficientFundsError" || err.name === "NotABuilderError");
+    if (!soft) {
+      reporter.errorMessage(err instanceof Error ? err.message : "Something went wrong");
+    }
     const reason = publishFailureReason(bulletinDone, registryDone);
     reporter.fail(reason, err);
     return { ok: false, reason };

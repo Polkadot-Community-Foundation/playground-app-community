@@ -34,10 +34,13 @@ import {
   getBulletinClient,
   useSignerState,
   useIconUrl,
-  placeholderFor,
+  cardColorForDomain,
 } from "./utils";
 import PointsBreakdown from "./PointsBreakdown";
-import { useRegistryUsername, displayNameForAccount } from "./utils/username";
+import { withReadDeadline } from "./utils/deadline.ts";
+import { displayNameForAccount } from "./utils/username";
+import { useRootUsername } from "./utils/identity";
+import { fetchAppDataBatch } from "./registryAppData.ts";
 import { PLAYGROUND_URL } from "./config";
 import type { AppEntry } from "./registryTypes";
 import { type AppMetadata } from "./App";
@@ -51,27 +54,48 @@ async function fetchOwnerEntries(
   address: `0x${string}`,
 ): Promise<{ total: number; entries: WidgetEntry[] }> {
   const registry = await registryReady;
-  const countRes = await registry.getOwnerAppCount.query(address);
+  const countRes = await withReadDeadline(
+    registry.getOwnerAppCount.query(address),
+    "Registry owner app count",
+  );
   const total = countRes.success ? Number(countRes.value) : 0;
   if (total === 0) return { total: 0, entries: [] };
 
-  // Concurrent slot reads: ~MAX_ITEMS pairs in parallel instead of 2N serial
-  // round-trips. Reverse-iterate so newest published is first.
+  // Concurrent slot reads for the owner's newest domains; app metadata URIs are
+  // resolved below in one getAppData batch. Each slot catches → a single wedged
+  // read drops just that tile instead of leaving the widget pending forever.
   const indexes = Array.from(
     { length: Math.min(MAX_ITEMS, total) },
     (_, k) => total - 1 - k,
   );
   const slots = await Promise.all(
-    indexes.map(async (i): Promise<WidgetEntry | null> => {
-      const dRes = await registry.getOwnerDomainAt.query(address, i);
-      if (!dRes.success || !dRes.value?.isSome) return null;
-      const domain = dRes.value.value;
-      const mRes = await registry.getMetadataUri.query(domain);
-      if (!mRes.success || !mRes.value?.isSome) return null;
-      return { index: i, domain, metadataUri: mRes.value.value, owner: address };
+    indexes.map(async (i): Promise<{ index: number; domain: string } | null> => {
+      try {
+        const dRes = await withReadDeadline(
+          registry.getOwnerDomainAt.query(address, i),
+          "Registry owner domain",
+        );
+        if (!dRes.success || !dRes.value?.isSome) return null;
+        return { index: i, domain: dRes.value.value };
+      } catch {
+        return null;
+      }
     }),
   );
-  const entries = slots.filter((s): s is WidgetEntry => s !== null);
+  const domainRows = slots.filter((s): s is { index: number; domain: string } => s !== null);
+  const appData = await fetchAppDataBatch(domainRows.map(row => row.domain));
+  const entries = domainRows.flatMap((row): WidgetEntry[] => {
+    const data = appData?.get(row.domain);
+    if (!data?.metadataUri) return [];
+    return [{
+      index: row.index,
+      domain: row.domain,
+      metadataUri: data.metadataUri,
+      owner: data.owner ?? address,
+      visibility: data.visibility,
+      publisher: data.publisher,
+    }];
+  });
 
   // Best-effort metadata hydration; placeholders if the host isn't a Polkadot
   // container (same degrade path as the SPA grid).
@@ -80,9 +104,12 @@ async function fetchOwnerEntries(
       if (!e.metadataUri) return;
       try {
         const client = await getBulletinClient();
-        e.metadata = await client.fetchJson<AppMetadata>(e.metadataUri);
+        e.metadata = await withReadDeadline(
+          client.fetchJson<AppMetadata>(e.metadataUri),
+          "Bulletin metadata fetch",
+        );
       } catch {
-        /* leave undefined — useIconUrl falls back to placeholderFor */
+        /* leave undefined — WidgetRow falls back to a per-app colour block */
       }
     }),
   );
@@ -94,7 +121,7 @@ export default function MyAppsWidget() {
   const signer = useSignerState();
   const account = signer.selectedAccount;
   const address = account?.h160Address as `0x${string}` | undefined;
-  const { username } = useRegistryUsername(address);
+  const { username } = useRootUsername(address);
 
   const [entries, setEntries] = useState<WidgetEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -115,6 +142,11 @@ export default function MyAppsWidget() {
         if (cancelled) return;
         setTotal(total);
         setEntries(entries);
+      } catch (err) {
+        // A wedged read now rejects (deadline) instead of hanging — log and
+        // leave the last-known list; the live-event effect re-pulls on the next
+        // registry event and an account switch re-runs this.
+        if (!cancelled) console.warn("[playground] MyAppsWidget load failed —", err);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -155,7 +187,7 @@ export default function MyAppsWidget() {
         <span className="widget-eyebrow">My Apps</span>
         <span className="widget-account" data-testid="widget-account">{headerLabel}</span>
       </header>
-      <PointsBreakdown account={address} refreshKey={refreshKey} />
+      <PointsBreakdown account={address} refreshKey={refreshKey} compact />
       {showLoading && <div className="widget-loading">Loading…</div>}
       {showEmpty && (
         <div className="widget-empty">
@@ -189,13 +221,21 @@ function WidgetRow({ entry }: { entry: WidgetEntry }) {
   return (
     <li className="widget-row" data-testid={`widget-row-${entry.domain}`}>
       <a className="widget-row-link" href={href} target="_blank" rel="noreferrer">
-        <img
-          className="widget-row-icon"
-          src={iconUrl ?? placeholderFor(entry.domain)}
-          alt=""
-          width={32}
-          height={32}
-        />
+        {iconUrl ? (
+          <img
+            className="widget-row-icon"
+            src={iconUrl}
+            alt=""
+            width={32}
+            height={32}
+          />
+        ) : (
+          <span
+            className="widget-row-icon"
+            style={{ background: cardColorForDomain(entry.domain) }}
+            aria-hidden="true"
+          />
+        )}
         <div className="widget-row-text">
           <span className="widget-row-name">
             {entry.metadata?.name ?? entry.domain}
