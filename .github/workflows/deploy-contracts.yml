@@ -185,29 +185,32 @@ jobs:
             - name: Install JS dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Install CDM CLI
-              run: |
-                  curl -fsSL https://raw.githubusercontent.com/paritytech/contract-dependency-manager/main/install.sh | bash
-                  echo "$HOME/.cdm/bin" >> "$GITHUB_PATH"
-                  export PATH="$HOME/.cdm/bin:$PATH"
-                  cdm --version
+            - name: Setup Bun (PCF cdm CLI runs TS directly)
+              uses: oven-sh/setup-bun@v2
 
-            # CDM's install.sh installs cargo-pvm-contract from `main` (the new
-            # pvm-contract-sdk lineage), which can't build this repo's older
-            # `pvm_contract`-based contract. Reinstall the matching CLI; the rev
-            # is derived from Cargo.lock by the script (single source of truth).
+            # Use the PCF FORK's cdm, NOT upstream's release binary. Upstream cdm
+            # reads registry views with the unmapped //Alice origin, which reverts
+            # Revive.AccountUnmapped on Summit. The fork carries
+            # `fix(cli): read registry origin-free in cdm install (#6)` — a
+            # pallet-revive mapping-free query fallback — which is fork-only and
+            # not in any release, so install.sh never gets it. The fork cdm runs
+            # TypeScript directly via bun.
+            - name: Install PCF cdm CLI (origin-free Summit reads)
+              run: |
+                  set -euo pipefail
+                  corepack enable
+                  git clone --depth 1 https://github.com/Polkadot-Community-Foundation/contract-dependency-manager "$RUNNER_TEMP/cdm-fork"
+                  ( cd "$RUNNER_TEMP/cdm-fork" && corepack pnpm install --frozen-lockfile )
+                  mkdir -p "$HOME/.cdm/bin"
+                  printf '#!/usr/bin/env bash\nexec bun "%s/cdm-fork/src/apps/cli/src/cli.ts" "$@"\n' "$RUNNER_TEMP" > "$HOME/.cdm/bin/cdm"
+                  chmod +x "$HOME/.cdm/bin/cdm"
+                  echo "$HOME/.cdm/bin" >> "$GITHUB_PATH"
+                  "$HOME/.cdm/bin/cdm" --version
+
+            # Reinstall the matching cargo-pvm-contract (rev derived from Cargo.lock)
+            # for this repo's pvm_contract-based contract.
             - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
               run: bash scripts/install-pvm-contract-cli.sh
-
-            # Summit: cdm's registry reads use a read origin that must be MAPPED
-            # on PolkaVM or they revert AccountUnmapped. Set cdm's account to the
-            # deploy key and ensure it's mapped before any cdm read/deploy on w3s.
-            - name: Map cdm deploy account (Summit read/deploy origin)
-              env:
-                  MNEMONIC: ${{ secrets.MNEMONIC }}
-              run: |
-                  cdm account set -n ${{ env.CDM_NETWORK }} --mnemonic "$MNEMONIC"
-                  cdm account map -n ${{ env.CDM_NETWORK }} || echo "account already mapped (ok)"
 
             - name: Install contract dependencies
               run: cdm i -n ${{ env.CDM_NETWORK }}
