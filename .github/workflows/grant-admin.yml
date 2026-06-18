@@ -1,0 +1,61 @@
+# Grant (or check) an admin on the live Summit playground registry.
+#
+# Runs the same proven Summit path as the deploy-contracts migrate step:
+#   Node 22 + bun + pnpm deps, then `bun scripts/add-admin.ts <SS58>` with
+#   MNEMONIC = the 5Fk8 sudo signer and ASSET_HUB_WS_URL pointed at Summit AH.
+#
+# add-admin.ts resolves the @w3s/playground-registry address LIVE via
+# ContractManager.fromLiveClient (→ latest version = the new v1 registry), so
+# this always targets whatever registry the committed cdm.json points at. The
+# 5Fk8 origin is mapped on Summit, so the live reads (getSudo/isAdmin) succeed
+# (the descriptor is paseo_asset_hub — Summit AH shares the same pallet-revive
+# metadata; only the WS endpoint differs, hence the ASSET_HUB_WS_URL override).
+name: Grant Admin
+
+on:
+    workflow_dispatch:
+        inputs:
+            ss58:
+                description: "SS58 address to grant admin on the playground registry"
+                required: true
+                type: string
+
+concurrency:
+    # 5Fk8 signs serially on-chain — never overlap with a deploy/migrate.
+    group: playground-registry-5fk8-writes
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+
+jobs:
+    grant-admin:
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Setup pnpm
+              uses: pnpm/action-setup@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Setup Bun (add-admin.ts runs TS directly)
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: "1.2.9"
+
+            - name: Add admin
+              env:
+                  MNEMONIC: ${{ secrets.MNEMONIC }}
+                  # add-admin.ts reads assetHubWsUrl() which defaults to Paseo;
+                  # point it at Summit Asset Hub.
+                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
+              run: bun scripts/add-admin.ts "${{ inputs.ss58 }}"
