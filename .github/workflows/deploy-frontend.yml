@@ -23,9 +23,9 @@ on:
                 description: "Runner label"
                 type: choice
                 options:
-                    - parity-default
                     - ubuntu-latest
-                default: parity-default
+                    - parity-default
+                default: ubuntu-latest
 
 permissions:
     contents: read
@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
     build:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Build
         steps:
             # For workflow_run events, check out latest main to include any
@@ -71,10 +71,15 @@ jobs:
 
             - name: Install and build
               env:
+                  # The upstream-snapshot frontend defaults VITE_ENVIRONMENT to
+                  # paseo; force summit so the build targets Summit AH/Bulletin
+                  # and resolves the @w3s registry (the fork's old src defaulted
+                  # to summit, so this was previously implicit).
+                  VITE_ENVIRONMENT: summit
+                  VITE_SENTRY_DSN: ""
                   VITE_VERSION: ${{ steps.version.outputs.version }}
                   VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}
                   VITE_SENTRY_ENV: ${{ steps.version.outputs.sentry_env }}
-                  VITE_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
               run: pnpm install && pnpm build:frontend
 
             - name: Upload build artifact
@@ -85,24 +90,27 @@ jobs:
                   retention-days: 1
 
     domain:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Determine domain
         outputs:
             domain: ${{ steps.compute.outputs.domain }}
         steps:
+            # PRs get an ephemeral preview on Summit (pr-N-playgroundtest.dot).
+            # main (workflow_run) and manual dispatch deploy production to
+            # Summit `playground.dot`. PCF CI is Summit-only.
             - name: Compute domain
               id: compute
               run: |
                   if [[ "${{ github.event_name }}" == "pull_request" ]]; then
                     echo "domain=pr-${{ github.event.pull_request.number }}-playgroundtest.dot" >> "$GITHUB_OUTPUT"
                   else
-                    echo "domain=playgroundtest.dot" >> "$GITHUB_OUTPUT"
+                    echo "domain=playground.dot" >> "$GITHUB_OUTPUT"
                   fi
 
     comment-deploying:
         needs: [build, domain]
         if: github.event_name == 'pull_request'
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Deploying
         steps:
             - name: Comment deployment in progress
@@ -125,8 +133,17 @@ jobs:
         with:
             dotns-domain: ${{ needs.domain.outputs.domain }}
             artifact-name: frontend-build
+            # All deploys go to Summit: PR → pr-N-playgroundtest.dot preview,
+            # main/dispatch → playground.dot. Each PR preview registers a fresh
+            # DotNS name (~2 SUM) + a Bulletin upload (14-day expiry); the
+            # preview link is meaningful opened in-host (a plain-browser gateway
+            # view boots with CHAIN="paseo" until product-sdk ships a Summit env).
+            env: summit
         secrets:
-            mnemonic: ${{ secrets.E2E_FUNDER_SEED }}
+            # 5Fk8… is the only Bulletin-authorized uploader, so it signs both
+            # preview and production deploys (E2E_FUNDER_SEED can't upload to
+            # Summit Bulletin).
+            mnemonic: ${{ secrets.MNEMONIC }}
 
     publish-metadata:
         needs: [build, deploy]
@@ -138,7 +155,7 @@ jobs:
         # Bulletin upload path.
         # if: github.event_name == 'workflow_run' || (github.event_name == 'workflow_dispatch')
         if: false
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Publish Metadata
         steps:
             - name: Checkout repository
@@ -171,7 +188,7 @@ jobs:
     comment-success:
         needs: deploy
         if: github.event_name == 'pull_request' && success()
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Success
         steps:
             - name: Comment on PR
@@ -203,7 +220,7 @@ jobs:
     comment-failure:
         needs: [build, deploy]
         if: github.event_name == 'pull_request' && failure()
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Comment Failure
         steps:
             - name: Comment on PR
