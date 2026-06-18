@@ -199,7 +199,9 @@ console.log(`Registry      : ${manager.getAddress(PLAYGROUND_REGISTRY_CONTRACT)}
 let done = 0;
 let skipped = 0;
 for (const m of matched) {
-  const h160 = ss58ToH160(m.account);
+  // m.account is ALREADY an H160 (the v0 snapshot stores product accounts as
+  // 0x…20-byte addresses); the contract's address params take it directly.
+  const h160 = m.account;
   const cur = await registry.getRootAccount.query(h160);
   if (cur.success && String(cur.value).toLowerCase() === m.rootHex.toLowerCase()) {
     console.log(`  = ${m.name}: already bound, skip`);
