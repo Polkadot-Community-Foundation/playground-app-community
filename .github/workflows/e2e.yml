@@ -16,7 +16,7 @@ on:
                 options:
                     - parity-default
                     - ubuntu-latest
-                default: parity-default
+                default: ubuntu-latest
     # NOTE: the per-PR `pull_request:` trigger was removed (2026-06-15) so E2E
     # no longer gates / red-flags every PR. The suite is non-blocking by design
     # (the app's chain/Bulletin paths are intentionally host-container-only and
