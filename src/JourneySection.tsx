@@ -14,12 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import type { CSSProperties, ReactNode } from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { Check, ChevronDown } from "lucide-react";
 import XpLabel from "./XpLabel";
+import { useSectionDisclosure } from "./utils";
 
 type Reward = { amount: number; upTo?: boolean; condition?: string };
-type Cta = { label: string; to: string };
+/** Navigate (`to`) or run an action (`onClick`) — mutually exclusive. */
+type Cta = { label: string; to: string } | { label: string; onClick: () => void };
 
 type Props = {
   /** Anchor target — the TOC and scroll-on-mount jump to this. */
@@ -33,10 +36,26 @@ type Props = {
   /** Instruction body (tabs, steps, guidance). */
   children?: ReactNode;
   cta?: Cta;
-  /** Plain variant for "Where next" — no card chrome. */
+  /** Optional secondary action, rendered beside the primary cta as a quieter
+   *  ghost button (e.g. "Introduce yourself" next to "Collect more resources"). */
+  secondaryCta?: Cta;
+  /** Plain variant for "Where next" — no card chrome, never collapsible. */
   plain?: boolean;
   /** Quest colour for this step; tints the XP label, code commands, and links. */
   hue?: string;
+  /**
+   * Task completion. When set the card is collapsible: a check chip joins the
+   * title and the body folds — collapsed by default iff complete AT MOUNT
+   * (see useSectionDisclosure for the mid-session and re-open rules).
+   */
+  complete?: boolean;
+  /**
+   * Gated behind the build gate (no network resources yet). A gated card is a
+   * normal collapsible card that simply starts folded and never takes the
+   * active-quest wash — it is NOT blocked: the caret expands it like any other.
+   * On unlock, PlaygroundTab auto-expands the incomplete gated cards once.
+   */
+  gated?: boolean;
 };
 
 /**
@@ -51,38 +70,134 @@ export default function JourneySection({
   description,
   children,
   cta,
+  secondaryCta,
   plain,
   hue,
+  complete,
+  gated,
 }: Props) {
-  return (
-    <section
-      id={id}
-      className={`journey-section${plain ? " journey-section--plain" : ""}`}
-      style={hue ? ({ "--journey-hue": hue } as CSSProperties) : undefined}
-      aria-labelledby={`${id}-title`}
-    >
-      <div className="journey-section-head">
-        <h2 id={`${id}-title`} className="journey-section-title">
-          {title}
-        </h2>
-        {rewards && rewards.length > 0 && (
-          <div className="journey-section-rewards">
-            {rewards.map((r) => (
-              <span key={r.condition ?? r.amount} className="journey-reward">
-                <XpLabel amount={r.amount} upTo={r.upTo} />
-                {r.condition && <span className="xp-note">{r.condition}</span>}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+  const sectionRef = useRef<HTMLElement>(null);
+  const collapsible = complete !== undefined && !plain;
+  // Gated steps (build gate not yet open) and completed steps start folded.
+  const { open, toggle } = useSectionDisclosure(
+    id,
+    collapsible && (!!complete || !!gated),
+  );
+  const collapsedBody = collapsible && !open;
+  const folded = collapsedBody;
+  // The active, actionable step gets a soft hue wash + accent edge — applied to
+  // any incomplete, ungated quest, the become-a-builder card included.
+  const activeQuest = !plain && !gated && complete === false;
+
+  // Primary CTAs take the filled button; a secondary takes a quieter ghost
+  // style. Both honour the navigate (`to`) vs action (`onClick`) split and
+  // stopPropagation so a CTA on a folded card doesn't also expand the section.
+  const renderCta = (c: Cta, variant: "primary" | "secondary") => {
+    const className =
+      variant === "primary"
+        ? "btn-primary journey-cta"
+        : "btn btn-ghost journey-cta journey-cta--secondary";
+    return "to" in c ? (
+      <Link className={className} to={c.to}>
+        {c.label}
+      </Link>
+    ) : (
+      <button
+        type="button"
+        className={className}
+        onClick={(e) => {
+          e.stopPropagation();
+          c.onClick();
+        }}
+      >
+        {c.label}
+      </button>
+    );
+  };
+
+  const body = (
+    <>
       {lede && <p className="xp-prizes-lede">{lede}</p>}
       {description && <p className="journey-section-desc">{description}</p>}
       {children}
-      {cta && (
-        <Link className="btn-primary journey-cta" to={cta.to}>
-          {cta.label}
-        </Link>
+      {(cta || secondaryCta) && (
+        <div className="journey-cta-row">
+          {cta && renderCta(cta, "primary")}
+          {secondaryCta && renderCta(secondaryCta, "secondary")}
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <section
+      ref={sectionRef}
+      id={id}
+      className={`journey-section${plain ? " journey-section--plain" : ""}${folded ? " is-folded" : ""}${activeQuest ? " is-active-quest" : ""}`}
+      style={hue ? ({ "--journey-hue": hue } as CSSProperties) : undefined}
+      aria-labelledby={`${id}-title`}
+      // A folded card opens on a click anywhere; the handler is absent when
+      // open, so the caret stays the only COLLAPSE control and keyboard users
+      // have its button — the section needs no role/tabindex.
+      onClick={collapsible && folded ? toggle : undefined}
+    >
+      <div className="journey-section-head">
+        {/* Title + rewards flow inline and wrap only on overflow; the caret
+            stays pinned to the right of the title line. */}
+        <div className="journey-section-heading">
+          <h2 id={`${id}-title`} className="journey-section-title">
+            {title}
+            {complete && (
+              <span className="journey-check" role="img" aria-label="Completed">
+                <Check size={15} strokeWidth={3} aria-hidden="true" />
+              </span>
+            )}
+          </h2>
+          {rewards && rewards.length > 0 && (
+            <div className="journey-section-rewards">
+              {rewards.map((r) => (
+                <span key={r.condition ?? r.amount} className="journey-reward">
+                  <XpLabel amount={r.amount} upTo={r.upTo} />
+                  {r.condition && <span className="xp-note">{r.condition}</span>}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        {collapsible && (
+          <button
+            type="button"
+            className="journey-caret"
+            aria-expanded={open}
+            aria-controls={`${id}-body`}
+            aria-label={open ? "Collapse section" : "Expand section"}
+            // stopPropagation: on a folded card the section's own click
+            // handler would re-toggle the bubbled event and snap it shut.
+            onClick={(e) => {
+              e.stopPropagation();
+              toggle();
+            }}
+          >
+            <ChevronDown
+              className={`journey-chevron${open ? " is-open" : ""}`}
+              size={20}
+              strokeWidth={2}
+              aria-hidden="true"
+            />
+          </button>
+        )}
+      </div>
+      {collapsible ? (
+        <div
+          id={`${id}-body`}
+          className={`journey-section-body${collapsedBody ? " is-collapsed" : ""}`}
+        >
+          <div className="journey-section-body-inner" inert={collapsedBody || undefined}>
+            {body}
+          </div>
+        </div>
+      ) : (
+        body
       )}
     </section>
   );

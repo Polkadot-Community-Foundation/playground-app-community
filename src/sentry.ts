@@ -15,13 +15,12 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import * as Sentry from "@sentry/react";
-import { VERSION } from "./config.ts";
+import { SENTRY_DSN, VERSION } from "./config.ts";
 
 // `import.meta.env` is Vite-only — undefined when this file is imported from a
 // Node script (tsx scripts/*.ts in CI / locally). Guard the access so scripts
 // that transitively pull in this module don't crash on module load.
 interface ViteEnv {
-  VITE_SENTRY_DSN?: string;
   VITE_SENTRY_TAG?: string;
   VITE_SENTRY_ENV?: string;
   VITE_VERSION?: string;
@@ -31,13 +30,8 @@ interface ViteEnv {
 }
 const env: ViteEnv = (import.meta as { env?: ViteEnv }).env ?? {};
 
-// DSN is public-safe (only allows sending events). Hardcoded so Sentry works
-// out of the box for the whole team; override via VITE_SENTRY_DSN to send
-// to a different project, or set it to an empty string to disable.
-const FALLBACK_DSN =
-  "https://4f31fd29e7b9a84e252b3e9793a2b986@o4511059872841728.ingest.de.sentry.io/4511332475666512";
-
-const dsn = env.VITE_SENTRY_DSN ?? FALLBACK_DSN;
+// DSN (SENTRY_DSN) comes from config.ts — injected at build time, empty by
+// default. Empty disables Sentry (see the init guard below).
 
 // VITE_SENTRY_TAG is set by Playwright (and any other synthetic-traffic
 // runner) to label the run so production dashboards can filter via
@@ -56,7 +50,7 @@ function scrubPaths(s: string): string {
 }
 
 // Skip Sentry init in three cases:
-//   1. No DSN (explicitly disabled).
+//   1. No DSN — the default unless VITE_SENTRY_DSN is supplied at build time.
 //   2. Non-browser context (Node scripts pulling this module in via the import
 //      graph — `@sentry/react` is browser-only and there's no useful telemetry
 //      to capture from a one-shot CLI invocation).
@@ -67,9 +61,9 @@ function scrubPaths(s: string): string {
 //      events that have no matching source maps. `pnpm dev` is unaffected
 //      (env.DEV=true → init proceeds with the "dev" version tag).
 const skipForLocalProdBuild = env.PROD && !env.VITE_VERSION;
-if (dsn && typeof window !== "undefined" && !skipForLocalProdBuild) {
+if (SENTRY_DSN && typeof window !== "undefined" && !skipForLocalProdBuild) {
   Sentry.init({
-    dsn,
+    dsn: SENTRY_DSN,
     release: `playground-app@${VERSION}`,
     integrations: [Sentry.browserTracingIntegration()],
     // Prod is the Web3 Summit demo — every page load + publish would be a
@@ -108,7 +102,7 @@ if (dsn && typeof window !== "undefined" && !skipForLocalProdBuild) {
     "[sentry] local production-mode build (VITE_VERSION unset) — Sentry disabled. CI sets VITE_VERSION; unset means a local `vite build` you don't want polluting prod Sentry.",
   );
 } else if (env.DEV) {
-  console.info("[sentry] VITE_SENTRY_DSN explicitly empty — Sentry disabled.");
+  console.info("[sentry] VITE_SENTRY_DSN not set — Sentry disabled.");
 }
 
 // Note: Session Replay is intentionally NOT enabled. Playground is mobile-first

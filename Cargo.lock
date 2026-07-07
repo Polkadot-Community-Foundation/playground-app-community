@@ -582,7 +582,7 @@ dependencies = [
 [[package]]
 name = "pvm-contract-macros"
 version = "0.3.0"
-source = "git+https://github.com/paritytech/cargo-pvm-contract?branch=charles%2Fcdm-integration#733a92e56e72a817cc818a20d269015735969eb7"
+source = "git+https://github.com/paritytech/cargo-pvm-contract?branch=charles%2Fcdm-integration#d886ab2aa80ffdd0e66133320bcbb4921ff2fc8c"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -594,7 +594,7 @@ dependencies = [
 [[package]]
 name = "pvm_contract"
 version = "0.3.0"
-source = "git+https://github.com/paritytech/cargo-pvm-contract?branch=charles%2Fcdm-integration#733a92e56e72a817cc818a20d269015735969eb7"
+source = "git+https://github.com/paritytech/cargo-pvm-contract?branch=charles%2Fcdm-integration#d886ab2aa80ffdd0e66133320bcbb4921ff2fc8c"
 dependencies = [
  "alloy-primitives",
  "const_format",

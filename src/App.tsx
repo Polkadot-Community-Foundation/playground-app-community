@@ -14,28 +14,41 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useCallback, useRef, memo } from "react";
-import { Link, Routes, Route, useParams } from "react-router-dom";
+import { useState, useEffect, useCallback, useRef, memo, Suspense, type CSSProperties } from "react";
+import { Link, Navigate, Routes, Route, useParams, useLocation, useNavigate } from "react-router-dom";
 import * as Sentry from "@sentry/react";
 import { calculateCid } from "@parity/product-sdk-cloud-storage";
 import {
-  placeholderFor,
   runTx,
   useSignerState,
   registryReady,
   getBulletinClient,
+  storeBytesViaHost,
   ensureSignerReady,
   useIconUrl,
-  useRegistryUsername,
   resolveProfileIdentifier,
   displayNameForAccount,
+  profileHueForAccount,
   isH160Address,
+  isInsufficientFundsError,
   stringify,
+  readmeBlurb,
   type SignerState,
 } from "./utils";
-import { handleExternalClick } from "./utils/externalNavigation.ts";
-import SetUsernameModal from "./SetUsernameModal.tsx";
-import { ExternalLink, Shuffle, Share2 } from "lucide-react";
+import {
+  useRootUsername,
+  revalidateRootIdentities,
+} from "./utils/identity.ts";
+import { markIdentityBonusClaimed } from "./utils/identityBonus.ts";
+import { lazyRetry } from "./utils/lazyRetry.ts";
+import { cardColorForDomain } from "./utils/placeholders.ts";
+import { withDeadline, withReadDeadline, DeadlineError, READ_DEADLINE_MS } from "./utils/deadline.ts";
+import { guardedWrite, isNotABuilderError } from "./utils/guardedWrite.ts";
+import { OnboardingProvider, useOnboarding } from "./OnboardingProvider.tsx";
+import LockedHint from "./LockedHint.tsx";
+import { QUEST_COLORS } from "./questPalette.ts";
+import LaunchButton from "./LaunchButton.tsx";
+import { ArrowLeft, Shuffle, Share2 } from "lucide-react";
 import { CLI_COMMAND, INSTALL_CMD, PLAYGROUND_URL } from "./config.ts";
 import { StarIcon, PinIcon, CopyIcon, CheckIcon } from "./icons.tsx";
 import ModPopup from "./ModPopup.tsx";
@@ -44,12 +57,14 @@ import AppDetailPanel from "./AppDetailPanel.tsx";
 import Leaderboard from "./Leaderboard.tsx";
 import PointsBreakdown from "./PointsBreakdown.tsx";
 import SectionBoundary from "./SectionBoundary.tsx";
+import { LoadingFallback } from "./LoadingFallback.tsx";
 import ErrorBanner from "./ErrorBanner.tsx";
 import LeftRail from "./LeftRail.tsx";
 import PlaygroundTab from "./PlaygroundTab.tsx";
 import AboutTab from "./AboutTab.tsx";
 import AppsTab from "./AppsTab.tsx";
 import ProfileTab from "./ProfileTab.tsx";
+import { fetchAppData, fetchAppDataBatch } from "./registryAppData.ts";
 import EventStream from "./utils/event-stream/EventStream.tsx";
 import {
   journeyTracker,
@@ -73,15 +88,33 @@ import {
   playgroundEventStream,
   isRegistryEventStreamItem,
 } from "./utils/event-stream/index.ts";
+import { XpCelebration } from "./XpCelebration.tsx";
+import { celebrationForEvent, type XpCelebrationSpec } from "./xpCelebration.ts";
+
+// The embedded site builder (/builder) is its own lazy chunk — its editor +
+// chain stack never load unless the route is visited.
+const BuilderTab = lazyRetry(() => import("./builder/index.tsx"));
 
 const PAGE = 12;
 const PAGE_LOAD_WATCHDOG_MS = 8000;
-export const TAGS = ["social", "chat", "defi", "utility", "gaming", "marketplace", "irl"] as const;
+
+// Liveness hint for the FIRST page load, shown over the skeletons when the
+// initial chain read runs long. A healthy load lands in 1-3s, so 10s is well
+// clear of the common case: we suggest a manual page reload, which is the only
+// real recovery in the host — window.location.reload() is a no-op there, so we
+// ASK the user rather than reload for them. The hard backstop is the
+// READ_DEADLINE_MS (45s) deadline on the chain reads themselves, after which
+// the load rejects into the error banner.
+const APPS_LOAD_RELOAD_HINT_MS = 10_000;
 
 // Render-time fix for legacy mis-spelled metadata.tag values published before the moddable rename.
 const TAG_SPELLING_FIXES: Record<string, string> = {
   modable: "moddable",
 };
+// Site Builder deploys carry `tag: "site"` — both the dot-site quest's detection
+// signal (see utils/useTaskProgress.ts, which reads the raw metadata tag) and now
+// a first-class Apps-grid category, so static-site deploys render a "site" chip
+// and can be filtered like any other category.
 const displayTag = (tag?: string): string | undefined =>
   tag ? TAG_SPELLING_FIXES[tag] ?? tag : undefined;
 
@@ -109,7 +142,11 @@ function fetchMetadata(cid: string): Promise<AppMetadata | null> {
   const p = (async (): Promise<AppMetadata | null> => {
     try {
       const client = await getBulletinClient();
-      return await client.fetchJson<AppMetadata>(cid);
+      // Deadline the fetch: past a healthy connect a single fetchJson can hang
+      // on a wedged host bridge, which would pin this CID's in-flight entry —
+      // and the tile/panel awaiting it — forever. A timeout falls through to
+      // the same null the host-unavailable path returns.
+      return await withReadDeadline(client.fetchJson<AppMetadata>(cid), "Bulletin metadata fetch");
     } catch {
       // Outside the Polkadot host, fetchJson throws CloudStorageHostUnavailableError.
       // See "Container-only delivery" in CLAUDE.md.
@@ -117,45 +154,6 @@ function fetchMetadata(cid: string): Promise<AppMetadata | null> {
     }
   })().finally(() => _metadataInFlight.delete(cid));
   _metadataInFlight.set(cid, p);
-  return p;
-}
-
-/**
- * Read star + mod counts for a domain from the registry contract.
- * Returns null on read failure so callers can keep cached values.
- *
- * Replaces the prior `@mock/reputation`-backed avg/count metric — the
- * star button is now a binary toggle, so a cumulative count is the only
- * signal we surface.
- */
-const _socialInFlight = new Map<string, Promise<{ starCount: number; modCount: number } | null>>();
-function fetchAppSocialCounts(domain: string): Promise<{ starCount: number; modCount: number } | null> {
-  const existing = _socialInFlight.get(domain);
-  if (existing) return existing;
-  const p = (async () => {
-    try {
-      const registry = await registryReady;
-      const [starRes, modRes] = await Promise.all([
-        registry.getStarCount.query(domain),
-        registry.getModCount.query(domain),
-      ]);
-      if (!starRes.success || !modRes.success) {
-        console.warn(
-          `[playground] registry.getStarCount/getModCount(${domain}) returned success:false — ${stringify({ starRes, modRes })}`,
-        );
-        return null;
-      }
-      return { starCount: Number(starRes.value), modCount: Number(modRes.value) };
-    } catch (cause) {
-      console.warn(
-        `[playground] registry.getStarCount/getModCount(${domain}) threw — ${stringify(cause)}`,
-      );
-      return null;
-    } finally {
-      _socialInFlight.delete(domain);
-    }
-  })();
-  _socialInFlight.set(domain, p);
   return p;
 }
 
@@ -192,46 +190,62 @@ export function buildAppShareUrl(domain: string): string {
 /// set — callers that need the slot index must supply it from a paginated
 /// query result.
 async function fetchAppEntry(domain: string): Promise<AppEntry | null> {
-  const registry = await registryReady;
-  const mRes = await registry.getMetadataUri.query(domain);
-  if (!mRes.success || !mRes.value?.isSome) return null;
-  const oRes = await registry.getOwner.query(domain);
-  const vRes = await registry.getVisibility.query(domain);
-  return {
-    domain,
-    metadataUri: mRes.value.value,
-    owner: oRes.success ? String(oRes.value) : undefined,
-    visibility: vRes.success ? Number(vRes.value) : VISIBILITY_PUBLIC,
-  };
+  // Deadlined + catch→null. This was the one read helper that neither bounded
+  // its queries nor caught: a wedged host bridge left it pending forever, and
+  // its callers (deep-link open at mount, handleSelectByDomain, the MyApps
+  // loop, AppDetailPanel's fetchEntry) would hang or — for the bare `.then`
+  // deep-link path — eat an unhandled rejection. null is already the documented
+  // "not found" return every caller handles (`if (!entry) …`), so a timeout
+  // degrades to the same graceful path. Reads are idempotent; a re-open retries.
+  try {
+    const data = await fetchAppData(domain);
+    if (!data?.metadataUri) return null;
+    return {
+      domain,
+      metadataUri: data.metadataUri,
+      owner: data.owner,
+      visibility: data.visibility,
+      publisher: data.publisher,
+    };
+  } catch (cause) {
+    console.warn(`[playground] fetchAppEntry(${domain}) failed — ${stringify(cause)}`);
+    return null;
+  }
 }
 
 async function checkIsAdmin(address: string): Promise<boolean> {
   try {
     const registry = await registryReady;
-    const res = await registry.isAdmin.query(address);
+    const res = await withReadDeadline(registry.isAdmin.query(address), "Registry isAdmin");
     return res.success && res.value === true;
   } catch {
     return false;
   }
 }
 
-async function fetchHasStarred(domain: string, voter: string): Promise<boolean> {
-  try {
-    const registry = await registryReady;
-    const res = await registry.hasStarred.query(voter as `0x${string}`, domain);
-    if (!res.success) {
+// Coalesce concurrent reads for the same (voter, domain) — the grid backfill
+// and the account-switch refetch can both ask for a domain at once. Mirrors
+// `_socialInFlight`. Keyed on voter:domain so a different account doesn't hit
+// a stale entry.
+const _hasStarredInFlight = new Map<string, Promise<boolean>>();
+function fetchHasStarred(domain: string, voter: string): Promise<boolean> {
+  const key = `${voter}:${domain}`;
+  const existing = _hasStarredInFlight.get(key);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      return (await fetchAppData(domain, voter))?.hasStarred ?? false;
+    } catch (cause) {
       console.warn(
-        `[playground] registry.hasStarred(${domain}, ${voter}) returned success:false — ${stringify(res)}`,
+        `[playground] fetchHasStarred(${domain}, ${voter}) threw — ${stringify(cause)}`,
       );
       return false;
+    } finally {
+      _hasStarredInFlight.delete(key);
     }
-    return res.value;
-  } catch (cause) {
-    console.warn(
-      `[playground] registry.hasStarred(${domain}, ${voter}) threw — ${stringify(cause)}`,
-    );
-    return false;
-  }
+  })();
+  _hasStarredInFlight.set(key, p);
+  return p;
 }
 
 // ---------------------------------------------------------------------------
@@ -253,14 +267,14 @@ export interface AppMetadata {
 }
 
 export const VISIBILITY_PRIVATE = 0;
-export { VISIBILITY_PUBLIC, type AppEntry } from "./registryTypes";
-import { VISIBILITY_PUBLIC, type AppEntry } from "./registryTypes";
+export { VISIBILITY_PUBLIC, TAGS, type AppEntry } from "./registryTypes";
+import { VISIBILITY_PUBLIC, TAGS, type AppEntry } from "./registryTypes";
 
 export interface AppDetails {
   metadata?: AppMetadata;
-  /** Cumulative stars given to this app (decremented on unstar). */
+  /** Cumulative permanent stars given to this app. */
   starCount?: number;
-  /** Whether the current viewer has currently starred this app. */
+  /** Whether the current viewer has permanently starred this app. */
   hasStarred?: boolean;
   /** Number of unique modders who have published a mod of this app. */
   modCount?: number;
@@ -269,7 +283,7 @@ export interface AppDetails {
 /// Apps-grid sort key. `newest` paginates `registry.getApps` (reverse-index
 /// order, the legacy default); `stars` / `mods` paginate `getTopStarred` /
 /// `getTopModded`, each backed by an on-chain OrderedIndex maintained by the
-/// star/unstar/mod-credit paths. Lazy-backfill caveat applies: v13 indexes
+/// star/mod-credit paths. Lazy-backfill caveat applies: v13 indexes
 /// start empty and only contain domains touched since the redeploy.
 export type AppsSort = "newest" | "stars" | "mods";
 
@@ -280,6 +294,53 @@ const METHOD_BY_SORT: Record<AppsSort, "getApps" | "getTopStarred" | "getTopModd
   mods: "getTopModded",
 };
 
+// XP confetti tuning. The pop auto-dismisses after a few seconds since it can
+// arrive unprompted (someone stars/mods your app mid-browse); the cooldown
+// collapses a burst of awards into one celebration.
+const CELEBRATION_AUTO_DISMISS_MS = 5000;
+const CELEBRATION_COOLDOWN_MS = 5000;
+
+// ---------------------------------------------------------------------------
+// Become-a-builder route — the CLI hand-off. A user who started in the terminal
+// but isn't a builder yet is sent to `/become-builder`; on arrival we auto-open
+// the one-approval flow over the Playground tab (the modal itself is rendered
+// globally by the OnboardingProvider). The route shows the Playground tab
+// underneath, with the modal overlaid on top. Already a builder → nothing to
+// run, so send them straight to the Playground tab at `/`.
+// ---------------------------------------------------------------------------
+
+function BecomeBuilderRoute({
+  account,
+  pointsRefresh,
+}: {
+  account?: string;
+  pointsRefresh: number;
+}) {
+  const { account: connected, hasIdentity, identityResolved, startBecomeBuilder } =
+    useOnboarding();
+  const fired = useRef(false);
+
+  // Once connected and confirmed NOT a builder, open the flow exactly once. Wait
+  // for `identityResolved` first: `hasIdentity` is `false` while the read is
+  // still in flight, so firing on it would (a) silently start a faucet top-up
+  // for an already-builder and (b) pop the become-builder modal at them before
+  // the redirect below lands — and that modal, rendered globally by the
+  // provider, would stay overlaid after this route unmounts.
+  useEffect(() => {
+    if (connected && identityResolved && !hasIdentity && !fired.current) {
+      fired.current = true;
+      startBecomeBuilder();
+    }
+  }, [connected, identityResolved, hasIdentity, startBecomeBuilder]);
+
+  // Already a builder → no flow to run; take them to the Playground tab.
+  if (connected && hasIdentity) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <PlaygroundTab account={account} pointsRefresh={pointsRefresh} />;
+}
+
 // ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
@@ -288,7 +349,16 @@ export default function App() {
   const [entries, setEntries] = useState<AppEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // True when the load error was a connection timeout (DeadlineError). In the
+  // host an in-app retry just re-awaits the same wedged client and reload() is
+  // a no-op, so the only real fix is a manual reload — we hide the Retry button
+  // in that case rather than offer a button that can't work.
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  // Set once the first load has run long enough to suggest a reload (see the
+  // effect below). Purely cosmetic — it never touches the in-flight load,
+  // which self-heals if the data eventually arrives.
+  const [loadStalled, setLoadStalled] = useState(false);
   // Apps-grid sort. Lives in App.tsx (not AppsTab) because it changes the
   // backing read call: paginated `getApps` for newest, `getTopStarred` /
   // `getTopModded` for the on-chain sorted indexes. `fetchPage` reads
@@ -302,9 +372,8 @@ export default function App() {
   // calls `ensureSignerReady` lazily before each write, which is when the
   // host prompts the user to connect + grant the SmartContractAllowance.
   const [detailEntry, setModEntry] = useState<AppEntry | null>(null);
-  const [myAppsRefresh, setMyAppsRefresh] = useState(0);
-  // Bumped on every point-award event (see the dispatcher's refreshLeaderboard
-  // below) so the Playground island's live XP total re-fetches without polling.
+  // Bumped on events that concern the CURRENT user (see the subscription
+  // below) so their surfaces re-fetch without polling.
   const [pointsRefresh, setPointsRefresh] = useState(0);
   const [isAdmin, setIsAdmin] = useState(false);
   const [pinnedEntries, setPinnedEntries] = useState<AppEntry[]>([]);
@@ -320,10 +389,39 @@ export default function App() {
     currentUserRef.current = signer.selectedAccount?.h160Address;
   }, [signer.selectedAccount?.h160Address]);
 
-  // Feat dropped the per-account myRating prefetch in favour of `hasStarred`,
-  // which is fetched lazily by AppDetailPanel via `fetchHasStarred` when the
-  // detail panel mounts (no bulk grid-side prefetch). Account-switch state
-  // wipe is now handled per-domain by the same component.
+  // Revalidate the connected user's per-account surfaces when the tab regains
+  // focus / becomes visible again. These (island XP + quests, points breakdown,
+  // identity-derived display name + the "Become a builder" button) are read
+  // once on mount and otherwise refreshed only by same-tab events for this
+  // user — so a change made on ANOTHER device, or while this tab sat
+  // backgrounded, would stay stale until a manual reload. Bumping pointsRefresh
+  // re-reads the XP/quest/breakdown surfaces; revalidateRootIdentities re-reads
+  // every mounted identity hook (display name + button visibility). No polling:
+  // we reconcile only at the moment the user looks back at the tab.
+  useEffect(() => {
+    const revalidate = () => {
+      if (!currentUserRef.current) return;
+      setPointsRefresh((k) => k + 1);
+      revalidateRootIdentities();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") revalidate();
+    };
+    window.addEventListener("focus", revalidate);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", revalidate);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
+  // XP confetti: fired whenever an award event credits the connected user (see
+  // the registry-event subscription below).
+  const [celebration, setCelebration] = useState<XpCelebrationSpec | null>(null);
+  const lastCelebrationAtRef = useRef(0);
+
+  // Next apps page fetch. Social row data is hydrated separately through
+  // `getAppData` so the pagination read stays focused on ordering.
   const prefetchRef = useRef<Promise<{ entries: AppEntry[]; scanned: number }> | null>(null);
   const detailsRef = useRef<Map<string, AppDetails>>(new Map());
   // Wired by the Leaderboard component on mount — calling this triggers a
@@ -360,7 +458,15 @@ export default function App() {
       { name: spanName, op: SpanOp.CHAIN_QUERY, attributes: { offset, page_size: PAGE, sort } },
       async (span) => {
         const registry = await registryReady;
-        const r = await (registry as any)[method].query(offset, PAGE);
+        // Deadline the read itself: even past a healthy connect, a single
+        // query can hang on a wedged host bridge. Without this the load never
+        // settles, `loading` stays true and the grid is stuck on skeletons
+        // forever (see deadline.ts). A DeadlineError lands in loadMore's catch.
+        const r = await withDeadline<any>(
+          (registry as any)[method].query(offset, PAGE),
+          READ_DEADLINE_MS,
+          "Loading apps",
+        );
         if (!r.success) {
           // `r.value` carries the raw dispatch-error payload (e.g.
           // `{ type: "AccountNotMapped" }`, `{ type: "ContractReverted" }`,
@@ -404,38 +510,67 @@ export default function App() {
     );
   }, []);
 
-  // Backfill metadata + ratings into detailsRef map. Each fetch updates the
-  // map and schedules a render flush as soon as it resolves, so fast fetches
-  // appear without waiting for the slowest one.
+  // Backfill metadata + social data into detailsRef map. Contract-side app
+  // data is fetched once per visible batch; Bulletin metadata still hydrates by
+  // CID and resolves independently.
   const backfillDetails = useCallback((batch: AppEntry[]) => {
     const map = detailsRef.current;
 
-    batch
-      .filter(entry => entry.metadataUri && !map.get(entry.domain)?.metadata)
-      .forEach(entry => {
-        fetchMetadata(entry.metadataUri!).then(metadata => {
-          if (!metadata) return;
-          map.set(entry.domain, { ...map.get(entry.domain), metadata });
-          scheduleDetailsFlush();
-        });
+    const hydrateMetadata = (domain: string, metadataUri?: string) => {
+      if (!metadataUri || map.get(domain)?.metadata) return;
+      fetchMetadata(metadataUri).then(metadata => {
+        if (!metadata) return;
+        map.set(domain, { ...map.get(domain), metadata });
+        scheduleDetailsFlush();
       });
+    };
 
-    batch
-      .filter(entry => map.get(entry.domain)?.starCount === undefined)
-      .forEach(entry => {
-        fetchAppSocialCounts(entry.domain).then(counts => {
-          if (!counts) return;
-          map.set(entry.domain, {
-            ...map.get(entry.domain),
-            starCount: counts.starCount,
-            modCount: counts.modCount,
-          });
-          scheduleDetailsFlush();
-        });
-      });
+    batch.forEach(entry => hydrateMetadata(entry.domain, entry.metadataUri));
 
-    // myRating prefetch removed with the rating-system drop; AppDetailPanel
-    // fetches `hasStarred` lazily for the single open entry instead.
+    const voter = currentUserRef.current;
+    const domainsNeedingAppData = batch
+      .filter(entry => {
+        const details = map.get(entry.domain);
+        return (
+          !entry.metadataUri ||
+          details?.starCount === undefined ||
+          details?.modCount === undefined ||
+          (!!voter && details?.hasStarred === undefined)
+        );
+      })
+      .map(entry => entry.domain);
+
+    if (domainsNeedingAppData.length === 0) return;
+
+    fetchAppDataBatch(domainsNeedingAppData, voter).then(appData => {
+      if (!appData) return;
+      const sameVoter = currentUserRef.current === voter;
+      let changed = false;
+
+      for (const entry of batch) {
+        const data = appData.get(entry.domain);
+        if (!data) continue;
+        hydrateMetadata(entry.domain, data.metadataUri);
+
+        const prev = map.get(entry.domain);
+        const next: AppDetails = { ...prev };
+        if (next.starCount === undefined) next.starCount = data.starCount;
+        if (next.modCount === undefined) next.modCount = data.modCount;
+        if (voter && sameVoter && next.hasStarred === undefined) {
+          next.hasStarred = data.hasStarred;
+        }
+        if (
+          next.starCount !== prev?.starCount ||
+          next.modCount !== prev?.modCount ||
+          next.hasStarred !== prev?.hasStarred
+        ) {
+          map.set(entry.domain, next);
+          changed = true;
+        }
+      }
+
+      if (changed) scheduleDetailsFlush();
+    });
   }, [scheduleDetailsFlush]);
 
   const loadMore = useCallback(async () => {
@@ -443,6 +578,7 @@ export default function App() {
     busyRef.current = true;
     setLoading(true);
     setLoadError(null);
+    setLoadTimedOut(false);
     try {
       const loaded = loadedRef.current;
 
@@ -489,7 +625,21 @@ export default function App() {
     } catch (err) {
       console.error("Load error:", err);
       setHasMore(false);
-      setLoadError(err instanceof Error ? err.message : String(err));
+      // A DeadlineError means the chain connection wedged (hung, not errored).
+      // The shared message is deploy-flavoured, and in the host an in-app retry
+      // just re-awaits the same dead module-level client — so steer the user to
+      // the one recovery that works (a manual page reload) and drop the Retry
+      // button via loadTimedOut. Ordinary errors keep Retry — re-running the
+      // query against a live connection can recover those.
+      const timedOut = err instanceof DeadlineError;
+      setLoadTimedOut(timedOut);
+      setLoadError(
+        timedOut
+          ? "Couldn't reach the chain. The connection on this host looks stuck. Please reload the page to try again."
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
       if (journeyTracker.isActive("page-load")) {
         journeyTracker.fail("page-load", "load-page-failed", err);
       }
@@ -500,6 +650,21 @@ export default function App() {
     }
   }, [fetchPage, backfillDetails]);
 
+  // "Slow load" hint — same shape as BuilderApp's liveState deadline machine
+  // (cancellation-safe effect). Armed only while the FIRST page is still in
+  // flight (loading + nothing rendered yet); torn down the instant the load
+  // settles — data arrives, the catch fires, or the READ_DEADLINE_MS backstop
+  // rejects — so a healthy load never flashes a hint. Cosmetic: it doesn't
+  // abort the load, so a merely-slow connection self-heals when the read lands.
+  useEffect(() => {
+    if (!(loading && entries.length === 0)) {
+      setLoadStalled(false);
+      return;
+    }
+    const t = setTimeout(() => setLoadStalled(true), APPS_LOAD_RELOAD_HINT_MS);
+    return () => clearTimeout(t);
+  }, [loading, entries.length]);
+
   const removeDomain = useCallback((domain: string) => {
     setEntries(prev => removeEntry(prev, domain));
     setPinnedEntries(prev => removeEntry(prev, domain));
@@ -507,20 +672,55 @@ export default function App() {
   }, []);
 
   const refreshSocialCounts = useCallback((domain: string) => {
-    fetchAppSocialCounts(domain).then(counts => {
+    const voter = currentUserRef.current;
+    fetchAppData(domain, voter).then(data => {
       const map = detailsRef.current;
       const prev = map.get(domain);
-      if (counts) {
-        map.set(domain, { ...prev, starCount: counts.starCount, modCount: counts.modCount });
+      if (data) {
+        map.set(domain, {
+          ...prev,
+          starCount: data.starCount,
+          modCount: data.modCount,
+          ...(voter ? { hasStarred: data.hasStarred } : {}),
+        });
       } else if (prev) {
         map.set(domain, { ...prev, starCount: undefined, modCount: undefined });
       }
       setDetailsVersion(v => v + 1);
     });
-    // Per-account refresh removed with the rating-system drop. The
-    // hasStarred flag is owned by AppDetailPanel and refreshed on its own
-    // mount cycle.
   }, []);
+
+  // Account switch invalidates every cached `hasStarred` flag — it was fetched
+  // for the previous account. Wipe it and, when connected, refresh every
+  // cached domain in one batch so grid cards reflect the new account's star
+  // state. New page loads use `backfillDetails`, which reads the same
+  // `currentUserRef`.
+  useEffect(() => {
+    const voter = signer.selectedAccount?.h160Address;
+    const map = detailsRef.current;
+    if (map.size === 0) return;
+    const domains = Array.from(map.keys());
+    let wiped = false;
+    for (const [domain, prev] of map) {
+      if (prev.hasStarred === undefined) continue;
+      map.set(domain, { ...prev, hasStarred: undefined });
+      wiped = true;
+    }
+    if (wiped) scheduleDetailsFlush();
+    if (!voter) return;
+
+    fetchAppDataBatch(domains, voter).then(appData => {
+      if (!appData || currentUserRef.current !== voter) return;
+      let changed = false;
+      for (const domain of domains) {
+        const data = appData.get(domain);
+        if (!data) continue;
+        map.set(domain, { ...map.get(domain), hasStarred: data.hasStarred });
+        changed = true;
+      }
+      if (changed) scheduleDetailsFlush();
+    });
+  }, [signer.selectedAccount?.h160Address, scheduleDetailsFlush]);
 
   const handleSelectEntry = useCallback((entry: AppEntry) => {
     addUiBreadcrumb("Open app detail", { domain: entry.domain });
@@ -566,47 +766,41 @@ export default function App() {
     });
   }, [backfillDetails]);
 
-  // best-block waitFor for the interactive star toggle: the count refreshes
+  // best-block waitFor for the interactive star action: the count refreshes
   // the moment the tx is included, without the finalization wait. Self-
   // corrects on revert via the post-tx refreshSocialCounts re-read.
   const handleStar = useCallback(async (domain: string) => {
     const registry = await registryReady;
-    await runTx(
-      "star",
-      (opts) => registry.star.tx(domain, opts),
-      { domain },
-      { waitFor: "best-block" },
-    );
+    try {
+      await guardedWrite(() =>
+        runTx(
+          "star",
+          (opts) => registry.star.tx(domain, opts),
+          { domain },
+          { waitFor: "best-block" },
+        ),
+      );
+    } catch (err) {
+      // Real failures here are otherwise invisible: handleCardStar swallows
+      // and the direct onStar path has no catch. Capture non-cancellations so
+      // they group with the other call-site captures (delete / pin / publish).
+      if (!isSigningRejection(err) && !isInsufficientFundsError(err) && !isNotABuilderError(err)) {
+        Sentry.captureException(err, { tags: { action: "star", domain } });
+      }
+      throw err;
+    }
     refreshSocialCounts(domain);
   }, [refreshSocialCounts]);
 
-  const handleUnstar = useCallback(async (domain: string) => {
-    const registry = await registryReady;
-    await runTx(
-      "unstar",
-      (opts) => registry.unstar.tx(domain, opts),
-      { domain },
-      { waitFor: "best-block" },
-    );
-    refreshSocialCounts(domain);
-  }, [refreshSocialCounts]);
-
-  // Wraps the v_new binary-star contract methods so AppCard / AppsTab can
-  // keep their pre-merge `onToggleFav(domain, makeFav)` shape. The old
-  // 0-255 rating route + handleRate / handleRemoveRating were dropped on
-  // the feat branch; this adapter routes through the equivalent
-  // star/unstar handlers without forcing every call site to be touched.
-  //
   // AppCard's onClick has no surrounding catch; swallow here to suppress
   // `onunhandledrejection`. `runTx` already logs the failure to the console.
-  const handleToggleFav = useCallback(async (domain: string, makeFav: boolean) => {
+  const handleCardStar = useCallback(async (domain: string) => {
     try {
-      if (makeFav) await handleStar(domain);
-      else await handleUnstar(domain);
+      await handleStar(domain);
     } catch {
       // intentionally empty
     }
-  }, [handleStar, handleUnstar]);
+  }, [handleStar]);
 
   const handleSetVisibility = useCallback(async (domain: string, vis: number) => {
     // setVisibility gates on `is_authorized(caller())` (owner OR sudo/admin).
@@ -618,10 +812,12 @@ export default function App() {
       {
         setVisibility: async (d, v) => {
           const registry = await registryReady;
-          return runTx(
-            "setVisibility",
-            (opts) => registry.setVisibility.tx(d, v, { ...opts, origin }) as Promise<{ ok: boolean }>,
-            { domain: d, visibility: v },
+          return guardedWrite(() =>
+            runTx(
+              "setVisibility",
+              (opts) => registry.setVisibility.tx(d, v, { ...opts, origin }) as Promise<{ ok: boolean }>,
+              { domain: d, visibility: v },
+            ),
           );
         },
         fetchEntry: fetchAppEntry,
@@ -642,40 +838,17 @@ export default function App() {
     );
   }, [removeDomain, backfillDetails, signer.selectedAccount?.address]);
 
-  const handleDelete = useCallback(async (domain: string) => {
-    addUserActionBreadcrumb("Delete app", { domain });
-    try {
-      const registry = await registryReady;
-      // unpublish gates on `is_authorized(caller())` (owner OR sudo/admin).
-      // See handleTogglePin for the dry-run-origin rationale.
-      const origin = signer.selectedAccount?.address;
-      await runTx(
-        "unpublish",
-        (opts) => registry.unpublish.tx(domain, { ...opts, origin }),
-        { domain },
-      );
-      removeDomain(domain);
-      setModEntry(null);
-      setMyAppsRefresh(k => k + 1);
-    } catch (err) {
-      if (isSigningRejection(err)) return;
-      Sentry.captureException(err, { tags: { action: "delete", domain } });
-      throw err;
-    }
-  }, [removeDomain, signer.selectedAccount?.address]);
-
   // Upload a new cover image and re-publish the app's metadata pointing at it.
   // Re-publish preserves owner + publisher on the contract (only visibility
   // and metadata_uri are mutable after first publish), so passing the current
   // visibility keeps the rest of the entry intact.
   const handleUpdateCoverImage = useCallback(async (domain: string, bytes: Uint8Array) => {
     addUserActionBreadcrumb("Edit cover image", { domain });
-    // Connect + request the bundled SmartContract / BulletIn / AutoSigning
-    // allowances up front. The Bulletin uploads below otherwise trip the
-    // host's "message too big" IPC error when BulletInAllowance is missing.
-    // `runTx` further down also calls `ensureSignerReady` but it's
-    // idempotent and the permissions are cached after the first grant.
-    console.log("[cover-editor] ensuring product permissions");
+    // Provision the SmartContractAllowance up front for the re-publish below
+    // (the registry write needs it; runTx would also do it, idempotently).
+    // The Bulletin uploads go through the host preimage path (storeBytesViaHost),
+    // which requests its own PreimageSubmit permission — they do NOT depend on
+    // ensureSignerReady / BulletinAllowance.
     await ensureSignerReady();
     const registry = await registryReady;
 
@@ -701,18 +874,13 @@ export default function App() {
     // Upload the cover bytes then the metadata blob. Sequential so the
     // metadata it points to is durably stored before we publish a CID that
     // references it.
-    console.log(
-      `[cover-editor] bulletin upload sizes — cover: ${bytes.byteLength} bytes (${(bytes.byteLength / 1024).toFixed(1)} KB), metadata: ${metadataBytes.byteLength} bytes (${(metadataBytes.byteLength / 1024).toFixed(1)} KB)`,
-    );
-    const bulletin = await getBulletinClient();
     await Sentry.startSpan(
       { name: "bulletin.upload", op: SpanOp.BULLETIN_UPLOAD, attributes: { item_count: 2 } },
       async () => {
-        await bulletin.store(bytes).send();
-        await bulletin.store(metadataBytes).send();
+        await storeBytesViaHost(bytes);
+        await storeBytesViaHost(metadataBytes);
       },
     );
-    console.log("[cover-editor] registry.publish — submitting");
 
     // Re-publish: owner = None (defaults to caller; ignored on re-publish),
     // modded_from = "" (re-publish ignores it), is_moddable preserves the
@@ -723,20 +891,22 @@ export default function App() {
         ?? pinnedEntries.find(e => e.domain === domain);
     const visibility = currentEntry?.visibility ?? VISIBILITY_PUBLIC;
     const isModdable = !!nextMetadata.repository?.trim();
-    await runTx(
-      "publish",
-      (opts) =>
-        registry.publish.tx(
-          domain,
-          metadataCid,
-          visibility,
-          { isSome: false, value: "0x0000000000000000000000000000000000000000" as const },
-          "",
-          isModdable,
-          false,
-          opts,
-        ) as Promise<{ ok: boolean }>,
-      { domain, action: "edit-cover" },
+    await guardedWrite(() =>
+      runTx(
+        "publish",
+        (opts) =>
+          registry.publish.tx(
+            domain,
+            metadataCid,
+            visibility,
+            { isSome: false, value: "0x0000000000000000000000000000000000000000" as const },
+            "",
+            isModdable,
+            false,
+            opts,
+          ) as Promise<{ ok: boolean }>,
+        { domain, action: "edit-cover" },
+      ),
     );
 
     // Patch the cached metadata so the detail panel re-renders with the new
@@ -757,7 +927,7 @@ export default function App() {
   const fetchPinnedApps = useCallback(async () => {
     try {
       const registry = await registryReady;
-      const r = await registry.getPinnedApps.query();
+      const r = await withReadDeadline(registry.getPinnedApps.query(), "Registry pinned apps");
       if (!r.success) return;
       const apps: AppEntry[] = (r.value ?? []).map((e: any) => ({
         index: e.index,
@@ -788,16 +958,18 @@ export default function App() {
       // even though the signed caller IS in the admin set. Pass the connected
       // SS58 so the dry-run runs as the real caller.
       const origin = signer.selectedAccount?.address;
-      await runTx(
-        pin ? "pin" : "unpin",
-        (opts) => (pin
-          ? registry.pin.tx(domain, { ...opts, origin })
-          : registry.unpin.tx(domain, { ...opts, origin })),
-        { domain },
+      await guardedWrite(() =>
+        runTx(
+          pin ? "pin" : "unpin",
+          (opts) => (pin
+            ? registry.pin.tx(domain, { ...opts, origin })
+            : registry.unpin.tx(domain, { ...opts, origin })),
+          { domain },
+        ),
       );
       await fetchPinnedApps();
     } catch (err) {
-      if (isSigningRejection(err)) return;
+      if (isSigningRejection(err) || isInsufficientFundsError(err) || isNotABuilderError(err)) return;
       Sentry.captureException(err, { tags: { action: pin ? "pin" : "unpin", domain } });
       throw err;
     }
@@ -836,6 +1008,38 @@ export default function App() {
     return playgroundEventStream.subscribeItems((item) => {
       if (!isRegistryEventStreamItem(item) || !item.payload) return;
       const event = item.payload;
+      // pointsRefresh drives the CURRENT user's surfaces (island XP, task
+      // checks, own profile panel) — bump it only for their own point events
+      // plus the events that can't say whose they are (Published could be
+      // their own CLI deploy). Identity events DO carry the recipient
+      // (primaryAccount), so the `me`-match below already covers them. A
+      // stranger's award must not re-trigger our per-account reads.
+      const me = currentUserRef.current?.toLowerCase();
+      const concernsUser =
+        (!!me && event.primaryAccount?.toLowerCase() === me) ||
+        event.name === "Published";
+      if (concernsUser) setPointsRefresh((k) => k + 1);
+      // XP confetti for the connected user's own awards. Gate on the award's
+      // recipient (primaryAccount), not the broader `concernsUser` flag, so a
+      // stranger's deploy / a username broadcast never pops. The cooldown drops
+      // back-to-back awards (a flurry of stars) to a single celebration.
+      if (me && event.primaryAccount?.toLowerCase() === me) {
+        // The intro bonus (becoming a builder) is once-ever — record it locally
+        // so the "Introduce yourself" achievement marks complete when the award
+        // lands here (e.g. claimed on the phone, observed live on this desktop
+        // tab).
+        if (event.name === "IdentityBonusAwarded") {
+          markIdentityBonusClaimed(me);
+        }
+        const spec = celebrationForEvent(event);
+        if (spec) {
+          const now = Date.now();
+          if (now - lastCelebrationAtRef.current >= CELEBRATION_COOLDOWN_MS) {
+            lastCelebrationAtRef.current = now;
+            setCelebration(spec);
+          }
+        }
+      }
       handleRegistryEvent(event.name, event.primaryDomain ?? "", {
         fetchEntry: fetchAppEntry,
         applyDecision: (entry, decision) => {
@@ -853,10 +1057,8 @@ export default function App() {
         backfillDetails,
         getCurrentUserAddr: () => currentUserRef.current,
         refreshSocialCounts,
-        refreshLeaderboard: () => {
-          leaderboardVersionRef.current?.();
-          setPointsRefresh((k) => k + 1);
-        },
+        refreshLeaderboard: () => leaderboardVersionRef.current?.(),
+        refreshIdentities: revalidateRootIdentities,
       });
     });
   }, [backfillDetails, fetchPinnedApps, removeDomain, refreshSocialCounts]);
@@ -893,7 +1095,16 @@ export default function App() {
   return (
     <>
       <div className="grain-bg"><GrainCanvas /></div>
+      {celebration && (
+        <XpCelebration
+          xp={celebration.xp}
+          label={celebration.label}
+          autoDismissMs={CELEBRATION_AUTO_DISMISS_MS}
+          onDone={() => setCelebration(null)}
+        />
+      )}
       <EventStream />
+      <OnboardingProvider refreshKey={pointsRefresh}>
       <div className="app-shell">
         <LeftRail />
         <main className="app-main">
@@ -916,7 +1127,9 @@ export default function App() {
                   pinnedEntries={pinnedEntries}
                   pinnedDomains={pinnedDomains}
                   loading={loading}
+                  loadStalled={loadStalled}
                   loadError={loadError}
+                  loadTimedOut={loadTimedOut}
                   hasMore={hasMore}
                   detailsRef={detailsRef}
                   detailsVersion={detailsVersion}
@@ -924,7 +1137,7 @@ export default function App() {
                   handleSelectEntry={handleSelectEntry}
                   retryLoad={retryLoad}
                   reviewer={signer.selectedAccount?.h160Address}
-                  onToggleFav={handleToggleFav}
+                  onStar={handleCardStar}
                   sortBy={sortBy}
                   onSortChange={handleSortChange}
                 />
@@ -937,7 +1150,8 @@ export default function App() {
                   signer={signer}
                   isAdmin={isAdmin}
                   onMod={handleSelectEntry}
-                  refreshTrigger={myAppsRefresh}
+                  pointsRefresh={pointsRefresh}
+                  onStar={handleCardStar}
                 />
               }
             />
@@ -948,8 +1162,20 @@ export default function App() {
                   signer={signer}
                   isAdmin={isAdmin}
                   onMod={handleSelectEntry}
-                  refreshTrigger={myAppsRefresh}
+                  pointsRefresh={pointsRefresh}
+                  onStar={handleCardStar}
+                  onOpenApp={handleSelectByDomain}
                 />
+              }
+            />
+            <Route
+              path="/builder"
+              element={
+                <SectionBoundary name="builder">
+                  <Suspense fallback={<LoadingFallback />}>
+                    <BuilderTab />
+                  </Suspense>
+                </SectionBoundary>
               }
             />
             <Route
@@ -965,6 +1191,16 @@ export default function App() {
                 </SectionBoundary>
               }
             />
+            <Route
+              path="/become-builder"
+              element={
+                <BecomeBuilderRoute
+                  account={signer.selectedAccount?.h160Address}
+                  pointsRefresh={pointsRefresh}
+                />
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
       </div>
@@ -980,8 +1216,6 @@ export default function App() {
             fetchHasStarred={fetchHasStarred}
             onClose={handleCloseDetail}
             onStar={handleStar}
-            onUnstar={handleUnstar}
-            onDelete={handleDelete}
             onTogglePin={handleTogglePin}
             onSetVisibility={handleSetVisibility}
             onSelectApp={handleSelectByDomain}
@@ -989,6 +1223,7 @@ export default function App() {
           />
         </SectionBoundary>
       )}
+      </OnboardingProvider>
     </>
   );
 }
@@ -1000,15 +1235,31 @@ export default function App() {
 function PublicProfilePage({
   signer,
   onMod,
-  refreshTrigger,
+  pointsRefresh,
   isAdmin,
+  onStar,
+  onOpenApp,
 }: {
   signer: SignerState;
   onMod: (e: AppEntry) => void;
-  refreshTrigger: number;
+  pointsRefresh: number;
   isAdmin: boolean;
+  onStar: (domain: string) => Promise<void>;
+  /** Re-open an app's detail panel — used by the "back to app" button when the
+   *  visitor arrived here from an App Detail Page author link. */
+  onOpenApp: (domain: string) => Promise<boolean>;
 }) {
   const { profileId = "" } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Set by the App Detail Page author link so we can offer a way back to it.
+  const fromApp = (location.state as { fromApp?: string } | null)?.fromApp;
+  // Land on the Apps grid, then open the app's detail over it — so closing the
+  // panel leaves the visitor on /apps (a real "back" feel), not this profile.
+  const goBackToApp = (domain: string) => {
+    navigate("/apps");
+    void onOpenApp(domain);
+  };
   const [resolution, setResolution] = useState<Awaited<ReturnType<typeof resolveProfileIdentifier>>>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1024,11 +1275,9 @@ function PublicProfilePage({
     return () => { cancelled = true; };
   }, [profileId]);
 
-  const { username } = useRegistryUsername(resolution?.address, refreshTrigger);
-
   if (loading) {
     return (
-      <div className="tab-profile public-profile" data-testid="public-profile-page">
+      <div className="tab tab-profile public-profile" data-testid="public-profile-page">
         <div className="public-profile-state" data-testid="public-profile-loading">
           Loading profile...
         </div>
@@ -1043,41 +1292,51 @@ function PublicProfilePage({
         ? `"${profileId}"`
         : "that profile";
     return (
-      <div className="tab-profile public-profile" data-testid="public-profile-page">
+      <div className="tab tab-profile public-profile" data-testid="public-profile-page">
         <section className="public-profile-state" data-testid="public-profile-not-found">
           <h1>Profile not found</h1>
           <p>No builder matches {missingProfile}.</p>
-          <Link className="btn btn-ghost" to="/leaderboard">Leaderboard</Link>
+          <Link className="back-to-top-btn profile-back-btn" to="/leaderboard">
+            <ArrowLeft size={15} strokeWidth={2.5} />
+            Leaderboard
+          </Link>
         </section>
       </div>
     );
   }
 
-  const displayName =
-    username ??
-    (resolution.lookup === "username"
-      ? resolution.normalizedInput
-      : displayNameForAccount(null, resolution.address));
-
   return (
-    <div className="tab-profile public-profile" data-testid="public-profile-page">
-      <section className="account-panel public-profile-panel" data-testid="public-profile-header">
-        <div className="account-panel-row">
-          <h1 className="account-panel-name" data-testid="public-profile-name">
-            {displayName}
-          </h1>
-          <Link className="btn btn-ghost account-panel-action" to="/leaderboard">
+    <div className="tab tab-profile public-profile" data-testid="public-profile-page">
+      <section data-testid="public-profile-header">
+        {fromApp ? (
+          <button
+            type="button"
+            className="back-to-top-btn profile-back-btn"
+            onClick={() => goBackToApp(fromApp)}
+            data-testid="profile-back-app"
+          >
+            <ArrowLeft size={15} strokeWidth={2.5} />
+            {fromApp.replace(/\.dot$/, "")}
+          </button>
+        ) : (
+          <Link
+            className="back-to-top-btn profile-back-btn"
+            to="/leaderboard"
+            data-testid="profile-back-leaderboard"
+          >
+            <ArrowLeft size={15} strokeWidth={2.5} />
             Leaderboard
           </Link>
-        </div>
+        )}
       </section>
       <MyApps
         signer={signer}
         onMod={onMod}
-        refreshTrigger={refreshTrigger}
+        pointsRefresh={pointsRefresh}
         isAdmin={isAdmin}
         ownerAddress={resolution.address}
         readOnly
+        onStar={onStar}
       />
     </div>
   );
@@ -1090,108 +1349,89 @@ function PublicProfilePage({
 export function MyApps({
   signer,
   onMod,
-  refreshTrigger,
+  pointsRefresh,
   isAdmin,
   ownerAddress,
   readOnly,
+  onStar,
 }: {
   signer: SignerState;
   onMod: (e: AppEntry) => void;
-  refreshTrigger: number;
+  /** Bumped on every point-award event (username bonus, stars, mods, deploys)
+   *  so the XP total re-fetches live without reloading the whole apps grid. */
+  pointsRefresh: number;
   isAdmin: boolean;
   ownerAddress?: string;
   readOnly?: boolean;
+  /** Star an app — passed through to each AppCard so the connected viewer can
+   *  star other builders' apps from their profile (self-star stays disabled). */
+  onStar?: (domain: string) => Promise<void>;
 }) {
   const [myEntries, setMyEntries] = useState<AppEntry[]>([]);
   const myDetailsRef = useRef<Map<string, AppDetails>>(new Map());
   const [loading, setLoading] = useState(false);
+  // #406: a profile-grid read that times out (a wedged host bridge on Android)
+  // now throws a DeadlineError into the load `catch` rather than hanging — but
+  // left to itself that just paints a bare "No apps published yet." with no way
+  // to tell a failed load from a genuinely-empty one and no way to recover. This
+  // flag turns the failed-and-empty case into a "couldn't load — Retry" state.
+  const [loadError, setLoadError] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Bumped to re-render after an optimistic star patch to myDetailsRef —
+  // separate from refreshKey so it doesn't trigger the full reload effect.
+  const [cardVersion, setCardVersion] = useState(0);
 
   const account = signer.selectedAccount;
   const selfAddress = account?.h160Address;
   const targetAddress = ownerAddress ?? selfAddress;
   const isSelf = !ownerAddress;
+  // Only other builders' apps are starrable; you can't star your own. When
+  // viewing someone else's profile, the connected account is the star voter.
+  const starVoter = !isSelf ? selfAddress : undefined;
 
-  // Set/Change username flow.
-  const [showSetUsername, setShowSetUsername] = useState(false);
-  const [usernameRefreshTick, setUsernameRefreshTick] = useState(0);
-  // Optimistically holds the just-claimed name until the chain read confirms.
-  const [optimisticUsername, setOptimisticUsername] = useState<string | null>(null);
-  const [usernameToast, setUsernameToast] = useState<string | null>(null);
-  // Synchronous mutex so a fast double-click doesn't fire two parallel txs.
-  const usernameInflightRef = useRef(false);
+  // Set/Change identity runs through the shared onboarding flow: the modal and
+  // the reveal/clear (set_identity / clear_identity) lifecycle live in
+  // OnboardingProvider, which survives this view unmounting mid-tx. Here we only
+  // open the flow and read the resolved name for display — the displayed name
+  // refreshes via the identity-event broadcast (revalidateRootIdentities) once
+  // the tx lands.
+  const { startBecomeBuilder } = useOnboarding();
 
-  const usernameReadRefresh = isSelf
-    ? usernameRefreshTick + refreshTrigger
-    : refreshTrigger;
-  const { username: chainUsername } = useRegistryUsername(
+  // `refreshKey` is included so the Retry button (#406) re-fires the name read
+  // alongside the grid + XP, not just the grid. The name hook self-heals via
+  // its own backoff retry too; this makes the single Retry cover all three.
+  const { username: chainUsername } = useRootUsername(
     targetAddress as `0x${string}` | undefined,
-    usernameReadRefresh,
+    refreshKey,
   );
 
-  // Retire optimistic only when the chain read confirms the same value;
-  // a mismatch means the read is still stale, and snapping back to the
-  // old name would flicker during a rapid rename.
-  useEffect(() => {
-    if (!optimisticUsername) return;
-    if (chainUsername === undefined) return;
-    if (chainUsername === optimisticUsername) {
-      setOptimisticUsername(null);
-    }
-  }, [chainUsername, optimisticUsername]);
-
-  useEffect(() => {
-    if (!usernameToast) return;
-    const id = setTimeout(() => setUsernameToast(null), 4000);
-    return () => clearTimeout(id);
-  }, [usernameToast]);
-
-  const handleClaimUsername = useCallback((name: string) => {
-    if (usernameInflightRef.current) return;
-    usernameInflightRef.current = true;
-    setOptimisticUsername(name);
-    setUsernameToast(null);
-
-    void (async () => {
-      try {
-        const registry = await registryReady;
-        const res = await runTx(
-          "setUsername",
-          (opts) => registry.setUsername.tx(name, opts),
-          { username: name },
-          {
-            waitFor: "best-block",
-            // SDK estimator undershoots first-time storage inserts; pin to
-            // avoid Revive.OutOfGas. See scripts/smoke-test-usernames.ts.
-            gasLimit: { ref_time: 1_500_000_000_000n, proof_size: 2_000_000n },
-            storageDepositLimit: 1_000_000_000_000n,
-          },
-        );
-        if ((res as { ok?: boolean }).ok === false) {
-          setOptimisticUsername(null);
-          setUsernameToast("Couldn't save your username. Try again?");
-          console.warn(`[playground] setUsername returned ok=false: ${stringify(res)}`);
-          return;
-        }
-        setUsernameRefreshTick((k) => k + 1);
-      } catch (cause) {
-        if (isSigningRejection(cause)) {
-          setOptimisticUsername(null);
-        } else {
-          setOptimisticUsername(null);
-          setUsernameToast("Couldn't save your username. Try again?");
-          console.warn(`[playground] setUsername threw: ${stringify(cause)}`);
-        }
-      } finally {
-        usernameInflightRef.current = false;
+  // Star wrapper for profile cards. Optimistically marks the card starred and
+  // bumps its count the instant the tx is submitted (handleStar already does a
+  // best-block submit + self-correcting re-read); a revert flips back on the
+  // next reload. Re-renders via cardVersion only — no full refetch.
+  const handleProfileStar = useCallback(
+    async (domain: string) => {
+      if (!onStar) return;
+      await onStar(domain);
+      const prev = myDetailsRef.current.get(domain);
+      if (prev && prev.hasStarred !== true) {
+        myDetailsRef.current.set(domain, {
+          ...prev,
+          hasStarred: true,
+          starCount: (prev.starCount ?? 0) + 1,
+        });
+        setCardVersion((v) => v + 1);
       }
-    })();
-  }, []);
+    },
+    [onStar],
+  );
 
-  const effectiveUsername = isSelf
-    ? optimisticUsername ?? chainUsername ?? null
-    : chainUsername ?? null;
+  // A non-null username string means a verified identity is bound on-chain
+  // (revealed); null = anonymous; undefined = still loading. In the identity
+  // model anonymous accounts resolve to `null` (never the animal handle), so a
+  // non-empty-string check is the reveal test.
+  const isRevealed = typeof chainUsername === "string" && chainUsername.length > 0;
 
   useEffect(() => {
     if (!targetAddress) {
@@ -1204,41 +1444,67 @@ export function MyApps({
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setLoadError(false);
       try {
         const registry = await registryReady;
-        const countRes = await registry.getOwnerAppCount.query(targetAddress);
+        const countRes = await withReadDeadline(
+          registry.getOwnerAppCount.query(targetAddress),
+          "Registry owner app count",
+        );
         const total = countRes.success ? Number(countRes.value) : 0;
 
-        const batch: AppEntry[] = [];
+        const domains: Array<{ index: number; domain: string }> = [];
         for (let i = total - 1; i >= 0; i--) {
           if (cancelled) break;
-          const dRes = await registry.getOwnerDomainAt.query(targetAddress, i);
+          const dRes = await withReadDeadline(
+            registry.getOwnerDomainAt.query(targetAddress, i),
+            "Registry owner domain",
+          );
           if (!dRes.success || !dRes.value?.isSome) continue;
-          const domain = dRes.value.value;
+          domains.push({ index: i, domain: dRes.value.value });
+        }
 
-          const entry = await fetchAppEntry(domain);
-          if (!entry) continue; // unpublished
-          if (readOnly && (entry.visibility ?? VISIBILITY_PUBLIC) < VISIBILITY_PUBLIC) continue;
-          batch.push({ ...entry, index: i, owner: targetAddress });
+        const appData = await fetchAppDataBatch(domains.map(row => row.domain), starVoter);
+        const batch: AppEntry[] = [];
+        for (const row of domains) {
+          const data = appData?.get(row.domain);
+          if (!data?.metadataUri) continue; // unpublished
+          if (readOnly && data.visibility < VISIBILITY_PUBLIC) continue;
+          batch.push({
+            index: row.index,
+            domain: row.domain,
+            metadataUri: data.metadataUri,
+            owner: data.owner ?? targetAddress,
+            visibility: data.visibility,
+            publisher: data.publisher,
+          });
         }
 
         if (!cancelled) {
           await Promise.allSettled(batch.map(async entry => {
-            if (!entry.metadataUri) return;
-            const metadata = await fetchMetadata(entry.metadataUri);
-            if (metadata) myDetailsRef.current.set(entry.domain, { metadata });
+            const data = appData?.get(entry.domain);
+            const metadata = entry.metadataUri ? await fetchMetadata(entry.metadataUri) : null;
+            myDetailsRef.current.set(entry.domain, {
+              ...myDetailsRef.current.get(entry.domain),
+              ...(metadata ? { metadata } : {}),
+              ...(data ? { starCount: data.starCount, modCount: data.modCount } : {}),
+              ...(starVoter && data ? { hasStarred: data.hasStarred } : {}),
+            });
           }));
           setMyEntries(batch);
         }
       } catch (err) {
+        // A wedged/timed-out read (DeadlineError) or any other throw lands here.
+        // Surface it as a recoverable state instead of a silent empty grid (#406).
         console.error("MyApps load error:", err);
+        if (!cancelled) setLoadError(true);
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
 
     return () => { cancelled = true; };
-  }, [targetAddress, refreshKey, refreshTrigger]);
+  }, [targetAddress, starVoter, refreshKey]);
 
   // Viewing own profile while not connected → connect prompt.
   if (isSelf && !targetAddress) {
@@ -1253,25 +1519,45 @@ export function MyApps({
     );
   }
 
-  const title = isSelf ? "Hello," : "Apps";
-  const displayName = displayNameForAccount(effectiveUsername, targetAddress);
+  // Pass the raw hook value (undefined = still loading → "…", null = confirmed
+  // anonymous → deterministic name). Coercing to null here would flash the
+  // generated name on every mount before the read resolves.
+  const displayName = displayNameForAccount(chainUsername, targetAddress);
+  // The reveal/clear saving state now lives in the shared onboarding modal, so
+  // the profile name simply updates when the identity event lands.
+  // Blue is reserved for "me"; other builders get a stable per-account hue.
+  // Set as a custom property on the page root so the header name and the
+  // Total XP value (inside PointsBreakdown) pick up the same color.
+  const profileHue = profileHueForAccount(targetAddress, isSelf);
 
   return (
-    <div className="tab-center" data-testid="my-apps-view">
+    <div
+      className="tab-center"
+      data-testid="my-apps-view"
+      style={{ "--profile-hue": profileHue } as CSSProperties}
+    >
       <header className="tab-header tab-header--inline">
         <h1 className="tab-title">
-          {title}{" "}
-          <span className="tab-name" data-testid="my-apps-account">
+          {/* Public profiles greet too — this is the page's single name line. */}
+          {isSelf ? "Hello, " : "Meet 👉 "}
+          <span
+            className="tab-name"
+            data-testid="my-apps-account"
+          >
             {displayName}
           </span>
         </h1>
-        {isSelf && account && (
+        {/* Profile identity CTA: opens the shared "Become a builder" flow (one
+            bundled approval — identity + resources). Shown only while not yet a
+            builder; becoming one is a one-way step, so the button vanishes once
+            revealed. */}
+        {isSelf && account && !isRevealed && (
           <button
-            className="btn btn-ghost"
-            onClick={() => setShowSetUsername(true)}
+            className="ucard-cta username-cta"
+            onClick={() => startBecomeBuilder()}
             data-testid="set-username-btn"
           >
-            {effectiveUsername ? "Change username" : "Set username"}
+            Become a builder
           </button>
         )}
       </header>
@@ -1287,19 +1573,45 @@ export function MyApps({
       )}
 
       {targetAddress && (
-        <PointsBreakdown account={targetAddress} refreshKey={refreshKey + refreshTrigger} />
+        <PointsBreakdown
+          account={targetAddress}
+          refreshKey={refreshKey + pointsRefresh}
+          hasUsername={isRevealed}
+        />
       )}
 
       {loading ? (
         <div className="spinner" data-testid="my-apps-loading">Loading apps...</div>
+      ) : loadError && myEntries.length === 0 ? (
+        // #406: a failed/timed-out load with nothing to show. Distinct from the
+        // genuinely-empty state below, and recoverable — Retry bumps refreshKey,
+        // which re-runs this effect (and the name + XP reads keyed on it).
+        <div className="empty" data-testid="my-apps-load-error">
+          <p>Couldn’t load this profile. This is usually a temporary connection problem.</p>
+          <button
+            type="button"
+            className="back-to-top-btn"
+            onClick={() => setRefreshKey((k) => k + 1)}
+            data-testid="my-apps-retry"
+          >
+            Retry
+          </button>
+        </div>
       ) : myEntries.length === 0 ? (
         <div className="empty" data-testid="my-apps-empty-state">
           No apps published yet.
         </div>
       ) : (
-        <div className="grid" data-testid="my-apps-grid">
+        <div className="grid" data-testid="my-apps-grid" data-card-version={cardVersion}>
           {myEntries.map(entry => (
-            <AppCard key={entry.domain} entry={entry} details={myDetailsRef.current.get(entry.domain)} onSelect={onMod} />
+            <AppCard
+              key={entry.domain}
+              entry={entry}
+              details={myDetailsRef.current.get(entry.domain)}
+              onSelect={onMod}
+              reviewer={selfAddress}
+              onStar={onStar ? handleProfileStar : undefined}
+            />
           ))}
         </div>
       )}
@@ -1313,20 +1625,6 @@ export function MyApps({
         </SectionBoundary>
       )}
 
-      {showSetUsername && isSelf && account && (
-        <SetUsernameModal
-          callerH160={account.h160Address as `0x${string}`}
-          currentUsername={effectiveUsername}
-          onConfirm={handleClaimUsername}
-          onClose={() => setShowSetUsername(false)}
-        />
-      )}
-
-      {usernameToast && (
-        <div className="username-toast" role="status" data-testid="username-toast">
-          {usernameToast}
-        </div>
-      )}
     </div>
   );
 }
@@ -1373,7 +1671,6 @@ function PublishModal({ onClose, onPublished }: {
     }
 
     const registry = await registryReady;
-    const bulletin = await getBulletinClient();
 
     const outcome = await runPublishFlow(
       {
@@ -1387,40 +1684,40 @@ function PublishModal({ onClose, onPublished }: {
       },
       {
         calculateCid,
-        storeBytes: (bytes) => bulletin.store(bytes).send(),
+        storeBytes: (bytes) => storeBytesViaHost(bytes),
         publishToRegistry: (d, cid, vis, moddedFrom, isModdable) =>
-          runTx(
-            "publish",
-            // owner = None → contract defaults to env::caller() (the signed-in user).
-            // The Option<Address> param exists for the CLI's dev-mode flow (Alice
-            // signs the tx but the user's H160 is recorded as owner); the frontend
-            // is always called by the actual user, so None is correct here.
-            //
-            // The frontend publish flow has no UI for "modded from" — that's a
-            // CLI-side feature (`dot mod` captures the source domain in
-            // `dot.json`). We always pass "" here. `isModdable` flips true
-            // whenever the user provided a repository URL, mirroring how the
-            // CLI derives it (a public GitHub URL is the moddable signal).
-            //
-            // `modded_from` is plain `string` on the contract, NOT
-            // `Option<String>` — the latter's SolAbi layout is incompatible
-            // with viem's tuple encoding (32-byte vs 64-byte head). Empty
-            // string is the "no source" sentinel.
-            (opts) =>
-              registry.publish.tx(
-                d,
-                cid,
-                vis,
-                { isSome: false, value: "0x0000000000000000000000000000000000000000" as const },
-                moddedFrom ?? "",
-                isModdable,
-                // is_dev_signer: the playground-app UI publish flow always
-                // runs under the user's phone-mode session; never a dev/
-                // --suri signer. The CLI passes true when appropriate.
-                false,
-                opts,
-              ) as Promise<{ ok: boolean }>,
-            { domain: d, modded_from: moddedFrom ?? "", is_moddable: isModdable },
+          guardedWrite(() =>
+            runTx(
+              "publish",
+              // owner = None → contract defaults to env::caller() (the signed-in user).
+              // Owner override belongs to the separate `publish_dev` method; the
+              // frontend's scored publish path is always called by the actual user.
+              //
+              // The frontend publish flow has no UI for "modded from" — that's a
+              // CLI-side feature (`dot mod` captures the source domain in
+              // `dot.json`). We always pass "" here. `isModdable` flips true
+              // whenever the user provided a repository URL, mirroring how the
+              // CLI derives it (a public GitHub URL is the moddable signal).
+              //
+              // `modded_from` is plain `string` on the contract, NOT
+              // `Option<String>` — the latter's SolAbi layout is incompatible
+              // with viem's tuple encoding (32-byte vs 64-byte head). Empty
+              // string is the "no source" sentinel.
+              (opts) =>
+                registry.publish.tx(
+                  d,
+                  cid,
+                  vis,
+                  { isSome: false, value: "0x0000000000000000000000000000000000000000" as const },
+                  moddedFrom ?? "",
+                  isModdable,
+                  // is_dev_signer is retained for ABI compatibility but ignored;
+                  // dev-signer deploys use `publish_dev` instead.
+                  false,
+                  opts,
+                ) as Promise<{ ok: boolean }>,
+              { domain: d, modded_from: moddedFrom ?? "", is_moddable: isModdable },
+            ),
           ),
         startBulletinSpan: (attrs, fn) =>
           Sentry.startSpan(
@@ -1617,12 +1914,18 @@ type AppCardProps = {
   details?: AppDetails;
   onSelect: (entry: AppEntry) => void;
   reviewer?: string;
-  onToggleFav?: (domain: string, makeFav: boolean) => Promise<void>;
+  onStar?: (domain: string) => Promise<void>;
 };
 
-export const AppCard = memo(function AppCard({ entry, details, onSelect, reviewer, onToggleFav }: AppCardProps) {
+export const AppCard = memo(function AppCard({ entry, details, onSelect, reviewer, onStar }: AppCardProps) {
   const name = details?.metadata?.name ?? entry.domain.replace(/\.dot$/, "");
-  const desc = details?.metadata?.description ?? "Customise and deploy your own version.";
+  // Prefer the explicit description; otherwise derive a blurb from the README
+  // (skipping its title / "readme" heading / badge lines). Empty when neither
+  // exists — no generic filler.
+  const desc =
+    details?.metadata?.description?.trim() ||
+    readmeBlurb(details?.metadata?.readme) ||
+    "";
   const tag = displayTag(details?.metadata?.tag);
   const moddable = !!details?.metadata?.repository;
   const iconUrl = useIconUrl(details?.metadata?.icon_cid);
@@ -1630,23 +1933,41 @@ export const AppCard = memo(function AppCard({ entry, details, onSelect, reviewe
   const modCount = details?.modCount ?? 0;
   const hasStarred = details?.hasStarred === true;
 
+  // Small random tilt for the "Featured sample" sticker, rolled once per mount
+  // so it stays put across re-renders (mirrors XpLabel's hand-stuck-sticker feel).
+  const [featuredRot] = useState(() => Math.random() * 10 - 5);
   const [modOpen, setModOpen] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
   const [favBusy, setFavBusy] = useState(false);
+  const [lockedHintOpen, setLockedHintOpen] = useState(false);
   const modAnchorRef = useRef<HTMLButtonElement | null>(null);
+  const favWrapRef = useRef<HTMLSpanElement | null>(null);
 
-  // v_new is a binary star (no rating scale). `hasStarred` from the contract
-  // controls which direction the toggle fires; `onToggleFav(domain, makeFav)`
-  // in App.tsx adapts to handleStar / handleUnstar.
+  // Starring writes on-chain, so it needs a builder. Until the viewer is one
+  // the star tap opens the "become a builder" nudge instead of attempting a tx.
+  // (A builder who's merely out of allowance is handled by guardedWrite, which
+  // faucets then stars — no nudge needed there.)
+  const { hasIdentity, account: onboardingAccount } = useOnboarding();
+
+  // Stars are one-way. `hasStarred` from the contract disables the button after
+  // the viewer's first successful star.
   const isFav = hasStarred;
   // The contract reverts SelfStarForbidden when an owner tries to star their
   // own app — disable the button so the click never reaches the chain.
   const isOwner = !!reviewer && !!entry.owner && entry.owner.toLowerCase() === reviewer.toLowerCase();
   const handleFav = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!onToggleFav || !reviewer || favBusy || isOwner) return;
+    if (!onStar || !reviewer || favBusy || isOwner || isFav) return;
+    // Gate on identity: a connected non-builder gets the gentle nudge anchored
+    // to the star, not a doomed transaction.
+    if (onboardingAccount && !hasIdentity) {
+      setLockedHintOpen(true);
+      return;
+    }
     setFavBusy(true);
-    onToggleFav(entry.domain, !isFav).finally(() => setFavBusy(false));
+    void onStar(entry.domain)
+      .catch(() => undefined)
+      .finally(() => setFavBusy(false));
   };
 
   const handleShare = (e: React.MouseEvent) => {
@@ -1662,18 +1983,10 @@ export const AppCard = memo(function AppCard({ entry, details, onSelect, reviewe
     setModOpen(o => !o);
   };
 
-  const slug = entry.domain.replace(/\.dot$/, "");
-  const launchHref = `https://${slug}.dot.li`;
-
-  const handleLaunch = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.stopPropagation();
-    addUserActionBreadcrumb("Launch app", { domain: entry.domain });
-    handleExternalClick(e);
-  };
-
   return (
     <article
       className="app-post"
+      style={{ "--card-color": cardColorForDomain(entry.domain) } as CSSProperties}
       onClick={() => onSelect(entry)}
       data-testid="app-card"
       data-domain={entry.domain}
@@ -1689,19 +2002,11 @@ export const AppCard = memo(function AppCard({ entry, details, onSelect, reviewe
               <PinIcon width="20" height="20" />
             </span>
           )}
-          <span className="app-post-title-text">{name}</span>
+          <span className="app-post-title-text">
+            <span className="app-post-title-clamp">{name}</span>
+          </span>
         </h2>
-        <a
-          className="btn-primary"
-          href={launchHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={handleLaunch}
-          data-testid="app-post-launch"
-        >
-          <ExternalLink size={14} aria-hidden="true" />
-          <span>Launch</span>
-        </a>
+        <LaunchButton domain={entry.domain} />
       </header>
       <p className="app-post-blurb" data-testid="card-desc">{desc}</p>
       <div className="app-post-tags">
@@ -1725,52 +2030,74 @@ export const AppCard = memo(function AppCard({ entry, details, onSelect, reviewe
           </span>
         )}
       </div>
-      {iconUrl && (
-        <div className="app-post-image">
-          <img src={iconUrl} alt="" loading="lazy" />
-        </div>
-      )}
-      <div className="app-post-bar">
-        <span className="bar-btn-mod-wrap">
-          <button
-            ref={modAnchorRef}
-            type="button"
-            className={`bar-btn bar-btn-mod${modOpen ? " is-open" : ""}`}
-            onClick={handleMod}
-            data-testid="bar-btn-mod"
-            aria-haspopup="dialog"
-            aria-expanded={modOpen}
+      <div className="app-post-image">
+        {entry.pinned && (
+          <span
+            className="app-post-featured"
+            style={{ transform: `rotate(${featuredRot}deg)` }}
+            data-testid="card-featured"
           >
-            <Shuffle size={18} aria-hidden="true" />
-            <span className="bar-label">Mod</span>
+            Featured sample
+            <PinIcon className="app-post-featured-pin" aria-hidden="true" />
+          </span>
+        )}
+        {iconUrl && <img src={iconUrl} alt="" loading="lazy" draggable={false} />}
+      </div>
+      <div className="app-post-bar">
+        <span
+          className="bar-btn-fav-wrap"
+          ref={favWrapRef}
+          style={{ "--journey-hue": QUEST_COLORS.character } as CSSProperties}
+        >
+          <button
+            type="button"
+            className={`bar-btn bar-btn-fav${isFav ? " is-active" : ""}`}
+            disabled={!onStar || !reviewer || favBusy || isOwner || isFav}
+            onClick={handleFav}
+            data-testid="bar-btn-fav"
+            data-active={isFav ? "true" : "false"}
+            aria-pressed={isFav}
+            title={isOwner ? "You can't star your own app" : isFav ? "Already starred" : undefined}
+          >
+            <StarIcon width="16" height="16" />
+            <span className="bar-label">Star</span>
+            {details?.starCount === undefined ? (
+              <span className="bar-count is-loading" aria-hidden="true" />
+            ) : starCount > 0 ? (
+              <span className="bar-count" data-testid="card-stars">{starCount}</span>
+            ) : null}
           </button>
-          {modOpen && (
-            <ModPopup
-              domain={entry.domain}
-              moddable={moddable}
-              onClose={() => setModOpen(false)}
-              anchorRef={modAnchorRef}
+          {lockedHintOpen && (
+            <LockedHint
+              onClose={() => setLockedHintOpen(false)}
+              anchorRef={favWrapRef}
             />
           )}
         </span>
-        <button
-          type="button"
-          className={`bar-btn bar-btn-fav${isFav ? " is-active" : ""}`}
-          disabled={!onToggleFav || !reviewer || favBusy || isOwner}
-          onClick={handleFav}
-          data-testid="bar-btn-fav"
-          data-active={isFav ? "true" : "false"}
-          aria-pressed={isFav}
-          title={isOwner ? "You can't star your own app" : undefined}
-        >
-          <StarIcon width="16" height="16" />
-          <span className="bar-label">Star</span>
-          {details?.starCount === undefined ? (
-            <span className="bar-count is-loading" aria-hidden="true" />
-          ) : starCount > 0 ? (
-            <span className="bar-count" data-testid="card-stars">{starCount}</span>
-          ) : null}
-        </button>
+        {moddable && (
+          <span className="bar-btn-mod-wrap">
+            <button
+              ref={modAnchorRef}
+              type="button"
+              className={`bar-btn bar-btn-mod${modOpen ? " is-open" : ""}`}
+              onClick={handleMod}
+              data-testid="bar-btn-mod"
+              aria-haspopup="dialog"
+              aria-expanded={modOpen}
+            >
+              <Shuffle size={18} aria-hidden="true" />
+              <span className="bar-label">Mod</span>
+            </button>
+            {modOpen && (
+              <ModPopup
+                domain={entry.domain}
+                moddable={moddable}
+                onClose={() => setModOpen(false)}
+                anchorRef={modAnchorRef}
+              />
+            )}
+          </span>
+        )}
         <button
           type="button"
           className={`bar-btn bar-btn-share${shareCopied ? " is-copied" : ""}`}

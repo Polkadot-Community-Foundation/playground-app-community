@@ -18,7 +18,15 @@
 // Lives separately from App.tsx so unit-test importers don't pull in
 // chain-connection side effects via the App module's transitive imports.
 
+export const VISIBILITY_PRIVATE = 0;
 export const VISIBILITY_PUBLIC = 1;
+
+/// Canonical app category tags — the single source of truth for the Apps-tab
+/// filter, the publish forms, and the builder's "List in Apps" panel. Tags are
+/// free-form in metadata, but only these are recognised as selectable
+/// categories. Lives here (not App.tsx) so the builder can import it without
+/// pulling in the App module's chain-connecting transitive imports.
+export const TAGS = ["social", "chat", "site", "utility", "gaming", "marketplace", "irl"] as const;
 
 export interface AppEntry {
   /// Slot index in the global registry. Only set when the entry comes from

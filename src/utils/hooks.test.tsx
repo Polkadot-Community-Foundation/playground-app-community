@@ -15,8 +15,8 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
-import { useIntersectionObserver } from "./hooks";
+import { render, cleanup, screen, act } from "@testing-library/react";
+import { useIntersectionObserver, useRotatingMessage } from "./hooks";
 
 // Test harness — a component that wires the hook's returned ref to a div.
 // Tests trigger intersection via the IntersectionObserver mock and assert
@@ -132,5 +132,35 @@ describe("useIntersectionObserver", () => {
     render(<Sentinel onIntersect={onIntersect} enabled />);
 
     expect(instances[0].options).toEqual({ threshold: 0.1, rootMargin: "400px" });
+  });
+});
+
+describe("useRotatingMessage", () => {
+  function Rotator({ messages, interval }: { messages: readonly string[]; interval?: number }) {
+    const { text } = useRotatingMessage(messages, interval);
+    return <span data-testid="msg">{text}</span>;
+  }
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("starts on the first message", () => {
+    render(<Rotator messages={["a", "b", "c"]} interval={1000} />);
+    expect(screen.getByTestId("msg").textContent).toBe("a");
+  });
+
+  it("advances on the interval and wraps to the start", () => {
+    render(<Rotator messages={["a", "b", "c"]} interval={1000} />);
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(screen.getByTestId("msg").textContent).toBe("b");
+    act(() => void vi.advanceTimersByTime(2000));
+    // a → b → c → a: 3 ticks lands back on the first message.
+    expect(screen.getByTestId("msg").textContent).toBe("a");
+  });
+
+  it("never schedules a timer for a single-message list", () => {
+    render(<Rotator messages={["only"]} interval={1000} />);
+    act(() => void vi.advanceTimersByTime(5000));
+    expect(screen.getByTestId("msg").textContent).toBe("only");
   });
 });

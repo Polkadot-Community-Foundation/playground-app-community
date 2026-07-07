@@ -17,15 +17,14 @@ on:
                     - parity-default
                     - ubuntu-latest
                 default: ubuntu-latest
-    pull_request:
-    # Nightly schedule DISABLED while the suite targets Summit: e2e is red until
-    # the Summit blockers clear (product-sdk Summit env, host-api-test-sdk
-    # SUMMIT_ASSET_HUB fixture, @w3s/playground-registry deployed, funder
-    # Bulletin auth — see PLAYGROUND_SUMMIT_VM_RUNBOOK §12). Leaving the cron on
-    # would make `auto-file-failure` open a GitHub issue every night. Re-enable
-    # once e2e can go green on Summit.
-    # schedule:
-    #     - cron: "0 6 * * *"
+    # NOTE: the per-PR `pull_request:` trigger was removed (2026-06-15) so E2E
+    # no longer gates / red-flags every PR. The suite is non-blocking by design
+    # (the app's chain/Bulletin paths are intentionally host-container-only and
+    # the suite has drifted from the current card/detail UI — see the tracking
+    # issue) and is exercised manually (`workflow_dispatch`) + nightly instead.
+    # Daily at 06:00 UTC — catches Paseo regressions and signer balance drift.
+    schedule:
+        - cron: "0 6 * * *"
 
 permissions:
     contents: read

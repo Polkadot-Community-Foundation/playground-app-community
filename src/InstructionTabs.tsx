@@ -15,79 +15,89 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { useId, useState, type ReactNode } from "react";
-import { Code2 } from "lucide-react";
+import { Globe, LaptopMinimal, Monitor, Smartphone } from "lucide-react";
+import { detectEnvironment, type Environment } from "./utils/environment";
 
 type Props = {
-  /** Playground CLI instructions (always the default, always available). */
-  cli: ReactNode;
-  /** No-Code instructions. Omit to render the No Code tab as disabled. */
-  noCode?: ReactNode;
+  /** Local CLI flow — instructions for working on your computer. */
+  desktop: ReactNode;
+  /** In-browser flow — Site Builder / RevX. */
+  web: ReactNode;
+  /**
+   * Phone flow. Omit when the step can't be done on a phone — the Mobile tab
+   * then explains that a computer is needed to complete the quest.
+   */
+  mobile?: ReactNode;
 };
 
+const TAB_META: { key: Environment; label: string; icon: ReactNode }[] = [
+  { key: "desktop", label: "Desktop", icon: <Monitor size={24} aria-hidden="true" /> },
+  { key: "web", label: "Web", icon: <Globe size={24} aria-hidden="true" /> },
+  { key: "mobile", label: "Mobile", icon: <Smartphone size={24} aria-hidden="true" /> },
+];
+
 /**
- * Two-mode instruction switcher: a code-icon "Playground CLI" tab and a
- * "No Code" tab. When `noCode` is omitted the No Code tab renders disabled
- * (a flow that isn't available yet) and can't be selected.
+ * Three-mode instruction switcher keyed on where the user is working —
+ * Desktop / Web / Mobile. The default tab is auto-detected (see
+ * detectEnvironment) but every tab stays manually selectable. When a step has
+ * no mobile path the Mobile tab explains a computer is needed.
  */
-export default function InstructionTabs({ cli, noCode }: Props) {
-  const [active, setActive] = useState<"cli" | "no-code">("cli");
+export default function InstructionTabs({ desktop, web, mobile }: Props) {
+  // One-shot default — the user's manual choice should survive viewport
+  // changes, so this is seeded once and never re-detected.
+  const [active, setActive] = useState<Environment>(() => detectEnvironment());
   const baseId = useId();
-  const noCodeAvailable = noCode != null;
-  const current = active === "no-code" && noCodeAvailable ? "no-code" : "cli";
+
+  const panels: Record<Environment, ReactNode> = {
+    desktop,
+    web,
+    mobile: mobile ?? <ComputerNeededNotice />,
+  };
 
   return (
     <div className="instr-tabs">
       <div className="instr-tablist" role="tablist" aria-label="Instructions">
-        <button
-          type="button"
-          role="tab"
-          id={`${baseId}-cli-tab`}
-          aria-selected={current === "cli"}
-          aria-controls={`${baseId}-cli-panel`}
-          className={`instr-tab${current === "cli" ? " is-active" : ""}`}
-          onClick={() => setActive("cli")}
-        >
-          <Code2 size={15} aria-hidden="true" />
-          Playground CLI
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id={`${baseId}-nc-tab`}
-          aria-selected={current === "no-code"}
-          aria-controls={`${baseId}-nc-panel`}
-          className={`instr-tab${current === "no-code" ? " is-active" : ""}`}
-          onClick={() => noCodeAvailable && setActive("no-code")}
-          disabled={!noCodeAvailable}
-          title={noCodeAvailable ? undefined : "No Code flow coming soon"}
-        >
-          No Code
-          {!noCodeAvailable && <span className="instr-tab-soon">soon</span>}
-        </button>
+        {TAB_META.map(({ key, label, icon }) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            id={`${baseId}-${key}-tab`}
+            aria-selected={active === key}
+            aria-controls={`${baseId}-${key}-panel`}
+            className={`instr-tab${active === key ? " is-active" : ""}`}
+            onClick={() => setActive(key)}
+          >
+            {icon}
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="instr-box">
-        <div
-          role="tabpanel"
-          id={`${baseId}-cli-panel`}
-          aria-labelledby={`${baseId}-cli-tab`}
-          hidden={current !== "cli"}
-          className="instr-panel"
-        >
-          {cli}
-        </div>
-        {noCodeAvailable && (
+        {TAB_META.map(({ key }) => (
           <div
+            key={key}
             role="tabpanel"
-            id={`${baseId}-nc-panel`}
-            aria-labelledby={`${baseId}-nc-tab`}
-            hidden={current !== "no-code"}
+            id={`${baseId}-${key}-panel`}
+            aria-labelledby={`${baseId}-${key}-tab`}
+            hidden={active !== key}
             className="instr-panel"
           >
-            {noCode}
+            {panels[key]}
           </div>
-        )}
+        ))}
       </div>
     </div>
+  );
+}
+
+/** Mobile-tab content for steps that can't be completed on a phone. */
+function ComputerNeededNotice() {
+  return (
+    <p className="instr-computer-needed">
+      <LaptopMinimal size={18} aria-hidden="true" />
+      You’ll need the help of a computer to complete this quest.
+    </p>
   );
 }

@@ -94,7 +94,30 @@ async function ensureFixtureRegistered(): Promise<void> {
   await ensureSignerMapped();
 
   console.log(`[e2e setup] Publishing fixture '${FIXTURE_DOMAIN}' (signer: ${SIGNER.name}) …`);
-  const cid = await publishDomain(FIXTURE_DOMAIN, metadata);
+  let cid: string;
+  try {
+    cid = await publishDomain(FIXTURE_DOMAIN, metadata);
+  } catch (publishErr) {
+    // The Reads + Writes jobs run globalSetup in parallel with the SAME funder.
+    // On an unseeded chain both try to seed and their store/publish txs can
+    // collide on nonce (InvalidTxError "Stale"). That's fine — the winner seeds
+    // the fixture; the loser just needs to wait for it to appear. Poll getApp
+    // for the expected CID before treating the failure as fatal.
+    console.warn(`[e2e setup] publish failed (${(publishErr as Error).message}); polling for a concurrent seed…`);
+    const deadline = Date.now() + 60_000;
+    let seeded = false;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const row = await getApp(FIXTURE_DOMAIN);
+      if (row && row.metadataUri === expectedCid) {
+        console.log(`[e2e setup]   fixture seeded by a parallel job (cid: ${row.metadataUri})`);
+        seeded = true;
+        break;
+      }
+    }
+    if (!seeded) throw publishErr; // genuinely failed — surface the original cause
+    cid = expectedCid;
+  }
   console.log(`[e2e setup]   → metadataCid: ${cid}`);
 
   // publishDomain already calls waitForApp internally, so the row is
@@ -127,11 +150,23 @@ export default async function globalSetup() {
     await ensureFixtureRegistered();
   } catch (err) {
     const reason = (err as Error).message;
+    // Read the actual `reason` above before assuming a cause — these gates
+    // stack, and a single guess here previously sent debugging down the wrong
+    // path. Common causes, in the order they tend to surface on a fresh chain:
+    //   1. Funder has no PAS         → top up at https://faucet.polkadot.io/?network=pah
+    //   2. Funder not authorized on  → grant at
+    //      Bulletin Next (InvalidPayment)  https://paritytech.github.io/polkadot-bulletin-chain/authorizations
+    //   3. Fixture not on this chain → `publishDomain` self-seeds it from Node
+    //      (AsyncBulletinClient over a direct WS, bypassing the host-only
+    //      CloudStorageClient — product-sdk#94). If that publish itself errors,
+    //      `scripts/seed-e2e-fixture.mjs` runs the same path standalone for a
+    //      one-off: `E2E_FUNDER_SEED='<mnemonic>' pnpm tsx scripts/seed-e2e-fixture.mjs`
     throw new Error(
       `[e2e setup] Fixture registration failed — aborting suite.\n` +
         `  reason: ${reason}\n` +
-        `  most likely cause: SIGNER's substrate side is empty (storage deposit cannot be paid).\n` +
-        `  to fix: set E2E_FUNDER_SEED to a funded account (locally), or top up the funder for CI.`,
+        `  runbook: see the comment in e2e/setup.ts at this throw — the three gates are\n` +
+        `    (1) fund the funder with PAS, (2) authorize it on Bulletin Next,\n` +
+        `    (3) re-seed the fixture via scripts/seed-e2e-fixture.mjs.`,
     );
   }
 

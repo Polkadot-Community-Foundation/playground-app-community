@@ -1,0 +1,36 @@
+name: Unit Tests
+
+on:
+    pull_request:
+    push:
+        branches: [main]
+    workflow_dispatch:
+        inputs:
+            runner:
+                description: "Runner label"
+                type: choice
+                options:
+                    - parity-default
+                    - ubuntu-latest
+                default: ubuntu-latest
+
+permissions:
+    contents: read
+
+concurrency:
+    group: test-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    test:
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            # Vitest unit + component suite — no chain, runs in a few seconds.
+            - run: pnpm test

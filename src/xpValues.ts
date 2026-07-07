@@ -27,9 +27,13 @@
  * reflect what the contract WILL award, not what it does today.
  */
 export const XP_VALUES = {
-  /** One-time, awarded on first `set_username` call (#289). */
-  username: 25,
-  /** Each of the first two public deploys (#288). 3rd+ = 0. */
+  /** One-time, awarded on first verified identity bind (set_identity). */
+  identity: 25,
+  /**
+   * Each of the owner's first three awarded deploys (#288), regardless of
+   * public/private visibility; later deploys = 0. Deploys that award nothing
+   * (dev-signer, blacklisted recipient) don't consume a slot.
+   */
   deploy: 100,
   /** Per unique modder per source-app (deduped by `(modder, source)`). */
   modReceived: 50,

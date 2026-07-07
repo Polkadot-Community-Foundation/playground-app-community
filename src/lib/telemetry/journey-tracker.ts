@@ -22,14 +22,12 @@ export type AppJourneyType =
   | "page-load"
   | "authenticate"
   | "publish"
-  | "rate-app"
   | "star-app";
 
 export const APP_JOURNEY_OPS: Record<AppJourneyType, string> = {
   "page-load": "journey.page-load",
   "authenticate": "journey.authenticate",
   "publish": "journey.publish",
-  "rate-app": "journey.rate-app",
   "star-app": "journey.star-app",
 };
 

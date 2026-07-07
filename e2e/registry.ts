@@ -33,7 +33,15 @@ import {
   type ContractRuntime,
 } from "@parity/product-sdk-contracts";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
-import { calculateCid, CloudStorageClient } from "@parity/product-sdk-cloud-storage";
+import { paseo_bulletin } from "@parity/product-sdk-descriptors/paseo-bulletin";
+import { createClient } from "polkadot-api";
+import { getWsProvider } from "polkadot-api/ws";
+// AsyncBulletinClient is the lower-level Bulletin client (re-exported from
+// @parity/bulletin-sdk). We use it directly instead of CloudStorageClient.create:
+// the latter routes through @novasamatech/host-api's getHostProvider, which only
+// works inside a Polkadot Desktop/Mobile host (paritytech/product-sdk#94) and
+// throws "Host provider unavailable" from a Node CI runner.
+import { calculateCid, AsyncBulletinClient } from "@parity/product-sdk-cloud-storage";
 import { keccak256, utf8ToBytes } from "@parity/product-sdk-utils";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { readFileSync } from "node:fs";
@@ -46,19 +54,18 @@ import {
   REPUTATION_CONTRACT,
 } from "../src/utils/contractManifest.js";
 
-// product-sdk client environment for Bulletin/cloud-storage. Summit is the
-// production target; override with PRODUCT_SDK_ENV=paseo for Paseo runs.
-// NOTE: "summit" requires a product-sdk build that ships a Summit env — until
-// then CloudStorageClient.create will reject it. See the e2e Summit blockers
-// in PLAYGROUND_SUMMIT_VM_RUNBOOK.
-const PRODUCT_SDK_ENV = (process.env.PRODUCT_SDK_ENV ?? "summit") as "paseo" | "summit";
-
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cdmJsonSnapshot = JSON.parse(
   readFileSync(join(__dirname, "..", "cdm.json"), "utf-8"),
 ) as CdmJson;
 
 const DEV_PHRASE = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
+
+// Bulletin Next V2 WS endpoint (paritytech/product-sdk#77) — the chain the
+// metadata is stored to. Matches scripts/seed-e2e-fixture.mjs; override via
+// BULLETIN_WS_URL for a one-off run against a different Bulletin RPC.
+const BULLETIN_RPC = process.env.BULLETIN_WS_URL ?? "wss://paseo-bulletin-next-rpc.polkadot.io";
+const ZERO_H160 = "0x0000000000000000000000000000000000000000";
 
 /** Re-derive the SIGNER's polkadot-api signer for node-side tx submission. */
 function getSignerKeypair() {
@@ -222,24 +229,46 @@ export async function publishDomain(
   const metadataCid = (await calculateCid(metadataBytes)).toString();
 
   const acct = getSignerKeypair();
-  const bulletin = await CloudStorageClient.create({ environment: PRODUCT_SDK_ENV, signer: acct.signer });
+
+  // Upload metadata to Bulletin Next via the lower-level AsyncBulletinClient over
+  // a direct WS connection — the Node-capable path, identical to
+  // scripts/seed-e2e-fixture.mjs. This is what lets globalSetup self-seed the
+  // fixture in CI instead of depending on an out-of-band seed run.
+  //
+  // `store(...).send()` submits a signed `TransactionStorage.store` extrinsic and
+  // requires the signer to be authorized on the Bulletin Chain
+  // (`TransactionStorage.Authorizations`). If this throws an authorization error
+  // in CI, the funder needs a one-time authorization on Bulletin Next.
+  const bulletinClient = createClient(getWsProvider(BULLETIN_RPC));
   try {
-    // store(...).send() submits a signed `TransactionStorage.store` extrinsic
-    // and requires the signer to be authorized on the Bulletin Chain
-    // (`TransactionStorage.Authorizations`). The legacy `batchUpload` API
-    // wrapped a similar flow. If this throws with an authorization error in
-    // CI, the funder needs a one-time `bulletin.authorizeAccount(...)` call —
-    // see @parity/product-sdk-cloud-storage's `checkAuthorization` helper for a
-    // pre-flight check.
-    await bulletin.store(metadataBytes).send();
+    const bulletinApi = bulletinClient.getTypedApi(paseo_bulletin);
+    // Cast: the generated `paseo_bulletin` descriptor and the bulletin-sdk's
+    // expected `BulletinTypedApi` drift on the `tx.TransactionStorage.renew`
+    // signature (descriptor vs SDK version skew). Only `store()` is exercised
+    // here, and the runtime shape is exactly what scripts/seed-e2e-fixture.mjs
+    // (JS, untyped) uses successfully — so the cast is sound.
+    const inner = new AsyncBulletinClient(
+      bulletinApi as unknown as ConstructorParameters<typeof AsyncBulletinClient>[0],
+      acct.signer,
+      bulletinClient.submit,
+    );
+    await inner.store(metadataBytes).send();
   } finally {
-    // CloudStorageClient holds a WebSocket that keeps the Node event loop alive.
+    // The papi client holds a WebSocket that keeps the Node event loop alive.
     // Always release it, even on upload failure.
-    await bulletin.destroy();
+    bulletinClient.destroy();
   }
 
   const registry = await getRegistry();
-  const result = await registry.publish.tx(domain, metadataCid, visibility);
+  const result = await registry.publish.tx(
+    domain,
+    metadataCid,
+    visibility,
+    { isSome: false, value: ZERO_H160 }, // owner: None → contract records the caller (funder) as owner
+    "", // modded_from — fixture is not a mod
+    false, // is_moddable
+    false, // is_dev_signer
+  );
   if (!result.ok) {
     throw new Error(
       `registry.publish failed: ${JSON.stringify(result, (_, v) => (typeof v === "bigint" ? v.toString() : v))}`,

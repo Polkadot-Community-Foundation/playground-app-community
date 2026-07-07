@@ -14,6 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+/**
+ * @vitest-environment jsdom
+ *
+ * Overrides the unit project's default happy-dom (vitest.config.ts) for this
+ * file only. The readme XSS test asserts on DOMPurify.sanitize OUTPUT, and
+ * dompurify >=3.4.3 hardened its node-iterator/template traversal in a way
+ * happy-dom 20's DOM doesn't faithfully model — under happy-dom sanitize
+ * mangles safe and unsafe markup alike (allowed tags unwrapped, <script>
+ * leaks through), so the security regression test below would validate
+ * nothing. jsdom models the browser DOM faithfully, matching production.
+ * Keep any DOMPurify-output assertions in jsdom-environment files. If a second
+ * such file appears, promote this to an `environmentMatchGlobs` entry on the
+ * "unit" project in vitest.config.ts instead of repeating the docblock.
+ */
+
 import type { ReactElement } from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup, fireEvent, act } from "@testing-library/react";
@@ -28,10 +43,30 @@ vi.mock("@sentry/react", () => ({
   addBreadcrumb: vi.fn(),
   startSpan: vi.fn((_opts, fn) => fn({ setStatus: vi.fn(), setAttribute: vi.fn() })),
 }));
-vi.mock("@novasamatech/host-api-wrapper", () => ({
-  hostApi: {
-    navigateTo: vi.fn(() => Promise.resolve({ isErr: () => false })),
-  },
+// The author line uses <Link>; stub it to a plain anchor so the panel renders
+// without a Router context (the panel only consumes Link from react-router-dom).
+vi.mock("react-router-dom", () => ({
+  Link: ({
+    to,
+    children,
+    state: _state,
+    ...props
+  }: { to: string; children: ReactElement; state?: unknown }) => (
+    <a href={typeof to === "string" ? to : "#"} {...props}>
+      {children}
+    </a>
+  ),
+}));
+vi.mock("@parity/product-sdk-host", () => ({
+  // Tests run outside a host container, so the in-host nav branch is never
+  // taken; the stub just lets the import resolve and stays defensive if a
+  // handler ever fires.
+  isInsideContainerSync: vi.fn(() => false),
+  getTruApi: vi.fn(() =>
+    Promise.resolve({
+      navigateTo: vi.fn(() => Promise.resolve({ isErr: () => false })),
+    }),
+  ),
 }));
 vi.mock("./lib/telemetry", () => ({
   journeyTracker: {
@@ -51,10 +86,11 @@ vi.mock("./lib/telemetry", () => ({
 // `./utils` barrel re-exports from `./utils/contracts.ts`, which on module
 // load eagerly calls `getChainAPI(CHAIN)` — that throws `Host provider
 // unavailable` in Node. So we can NOT importActual the barrel; instead we
-// provide stand-ins for the three symbols AppDetailPanel actually uses
-// (`placeholderFor`, `stringify`, `useIconUrl`). placeholderFor + stringify
-// come from sibling util files that have no chain dep, so we re-import
-// those directly. useIconUrl returns null — same effect as out-of-host.
+// provide stand-ins for the symbols AppDetailPanel actually uses
+// (`cardColorForDomain`, `stringify`, `useIconUrl`). cardColorForDomain +
+// stringify come from sibling util files that have no chain dep, so we
+// re-import those directly. useIconUrl returns null — same effect as
+// out-of-host.
 vi.mock("./utils", async () => {
   const placeholders = await vi.importActual<typeof import("./utils/placeholders")>(
     "./utils/placeholders",
@@ -63,11 +99,46 @@ vi.mock("./utils", async () => {
     "./utils/stringify",
   );
   return {
-    placeholderFor: placeholders.placeholderFor,
+    cardColorForDomain: placeholders.cardColorForDomain,
     stringify: stringifyMod.stringify,
     useIconUrl: () => null,
+    // Author line: no registry username in tests → falls back to short H160.
+    useRegistryUsername: () => ({ username: null, pending: false, claiming: null }),
+    displayNameForAccount: (username: string | null | undefined, address?: string) =>
+      username ?? (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : ""),
   };
 });
+vi.mock("./utils/contracts.ts", () => ({
+  contractsReady: Promise.resolve({}),
+  registryReady: Promise.resolve({}),
+  signerManager: {
+    connect: vi.fn(() => Promise.resolve()),
+    getState: vi.fn(() => ({ status: "disconnected", selectedAccount: null })),
+    subscribe: vi.fn(() => () => undefined),
+  },
+  useSignerState: vi.fn(() => ({ status: "disconnected", selectedAccount: null, accounts: [], error: null })),
+}));
+vi.mock("./utils/event-stream/EventStream.tsx", () => ({
+  default: () => null,
+}));
+// Controllable onboarding state. The detail-page star handler gates on
+// `account && !hasIdentity` (connected non-builder → "become a builder" nudge
+// instead of a doomed tx). Default to a signed-out shape so the gate stays
+// inert for the existing star tests; the gate tests mutate it per-case and
+// afterEach resets it.
+const { onboardingState } = vi.hoisted(() => ({
+  onboardingState: {
+    account: undefined as string | undefined,
+    hasIdentity: false,
+    identityResolved: true,
+    hasResources: true,
+    startBecomeBuilder: vi.fn(),
+  },
+}));
+vi.mock("./OnboardingProvider", () => ({
+  useOnboarding: () => onboardingState,
+  OnboardingProvider: ({ children }: { children: ReactElement }) => children,
+}));
 
 import AppDetailPanel from "./AppDetailPanel";
 import { VISIBILITY_PUBLIC, type AppEntry, type AppDetails } from "./App";
@@ -118,13 +189,15 @@ const noopProps = {
   fetchHasStarred: vi.fn(() => Promise.resolve(false)),
   onClose: vi.fn(),
   onStar: vi.fn(() => Promise.resolve()),
-  onUnstar: vi.fn(() => Promise.resolve()),
-  onDelete: vi.fn(() => Promise.resolve()),
 };
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  // Reset the shared onboarding state so a gate test doesn't leak into the
+  // next case (clearAllMocks resets the spy but not these plain fields).
+  onboardingState.account = undefined;
+  onboardingState.hasIdentity = false;
 });
 
 describe("AppDetailPanel — rendering", () => {
@@ -319,7 +392,7 @@ describe("AppDetailPanel — star toggle", () => {
     expect(fetchHasStarred).toHaveBeenCalledWith("example.dot", OTHER_ADDRESS);
   });
 
-  it("toggles to Starred state and calls onStar exactly once when clicked", async () => {
+  it("marks the app as Starred and calls onStar exactly once when clicked", async () => {
     const onStar = vi.fn(() => Promise.resolve());
     render(
       <AppDetailPanel
@@ -344,10 +417,11 @@ describe("AppDetailPanel — star toggle", () => {
     expect(onStar).toHaveBeenCalledWith("example.dot");
     expect(btn).toHaveAttribute("data-starred", "true");
     expect(btn).toHaveTextContent(/starred/i);
+    expect(btn).toBeDisabled();
   });
 
-  it("calls onUnstar when the viewer has already starred and clicks again", async () => {
-    const onUnstar = vi.fn(() => Promise.resolve());
+  it("does not submit another transaction when the viewer already starred", async () => {
+    const onStar = vi.fn(() => Promise.resolve());
     render(
       <AppDetailPanel
         entry={baseEntry}
@@ -356,13 +430,14 @@ describe("AppDetailPanel — star toggle", () => {
         {...noopProps}
         // Pre-existing star — the contract's has_starred returns true.
         fetchHasStarred={vi.fn(() => Promise.resolve(true))}
-        onUnstar={onUnstar}
+        onStar={onStar}
       />,
     );
     // Wait for the effect that reads has_starred to flush.
     const btn = await screen.findByTestId("star-toggle-btn");
     await act(async () => { await Promise.resolve(); });
     expect(btn).toHaveAttribute("data-starred", "true");
+    expect(btn).toBeDisabled();
 
     await act(async () => {
       fireEvent.click(btn);
@@ -370,9 +445,60 @@ describe("AppDetailPanel — star toggle", () => {
       await Promise.resolve();
     });
 
-    expect(onUnstar).toHaveBeenCalledTimes(1);
-    expect(onUnstar).toHaveBeenCalledWith("example.dot");
+    expect(onStar).not.toHaveBeenCalled();
+    expect(btn).toHaveAttribute("data-starred", "true");
+  });
+
+  it("opens the become-a-builder nudge for a connected non-builder instead of starring", async () => {
+    // Connected (account set) but no claimed identity → the star tap must
+    // surface the LockedHint nudge rather than submit a tx the contract will
+    // reject. Mirrors the feed-card gate in App.tsx's AppCard.
+    onboardingState.account = OTHER_ADDRESS;
+    onboardingState.hasIdentity = false;
+    const onStar = vi.fn(() => Promise.resolve());
+    render(
+      <AppDetailPanel
+        entry={baseEntry}
+        details={baseDetails}
+        signer={signedInState(OTHER_ADDRESS)}
+        {...noopProps}
+        fetchHasStarred={vi.fn(() => Promise.resolve(false))}
+        onStar={onStar}
+      />,
+    );
+    const btn = await screen.findByTestId("star-toggle-btn");
+    await act(async () => {
+      fireEvent.click(btn);
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("locked-hint")).toBeInTheDocument();
+    expect(onStar).not.toHaveBeenCalled();
     expect(btn).toHaveAttribute("data-starred", "false");
+  });
+
+  it("stars normally for a connected builder (gate passes through)", async () => {
+    onboardingState.account = OTHER_ADDRESS;
+    onboardingState.hasIdentity = true;
+    const onStar = vi.fn(() => Promise.resolve());
+    render(
+      <AppDetailPanel
+        entry={baseEntry}
+        details={baseDetails}
+        signer={signedInState(OTHER_ADDRESS)}
+        {...noopProps}
+        fetchHasStarred={vi.fn(() => Promise.resolve(false))}
+        onStar={onStar}
+      />,
+    );
+    const btn = await screen.findByTestId("star-toggle-btn");
+    await act(async () => {
+      fireEvent.click(btn);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByTestId("locked-hint")).toBeNull();
+    expect(onStar).toHaveBeenCalledTimes(1);
+    expect(onStar).toHaveBeenCalledWith("example.dot");
   });
 });
 
@@ -408,6 +534,39 @@ describe("AppDetailPanel — ownership + admin", () => {
       "data-is-owner",
       "false",
     );
+  });
+
+  it("swaps the star section for the visibility toggle on an owned app (with onSetVisibility)", () => {
+    // Owner + onSetVisibility → the Public/Private toggle occupies the star
+    // control's slot; the star button and the self-star notice are both gone.
+    render(
+      <AppDetailPanel
+        entry={baseEntry}
+        details={baseDetails}
+        signer={signedInState(OWNER_ADDRESS)}
+        {...noopProps}
+        onSetVisibility={vi.fn(() => Promise.resolve())}
+      />,
+    );
+    expect(screen.getByTestId("detail-visibility-section")).toBeInTheDocument();
+    expect(screen.getByTestId("visibility-public-btn")).toBeInTheDocument();
+    expect(screen.queryByTestId("star-toggle-btn")).toBeNull();
+    expect(screen.queryByTestId("star-self-notice")).toBeNull();
+  });
+
+  it("falls back to the self-star notice for an owner without onSetVisibility", () => {
+    // No visibility callback → the swap can't happen, so the owner still sees
+    // the "you can't star your own app" notice (graceful degradation).
+    render(
+      <AppDetailPanel
+        entry={baseEntry}
+        details={baseDetails}
+        signer={signedInState(OWNER_ADDRESS)}
+        {...noopProps}
+      />,
+    );
+    expect(screen.getByTestId("star-self-notice")).toBeInTheDocument();
+    expect(screen.queryByTestId("detail-visibility-section")).toBeNull();
   });
 
   it("renders the pin toggle for admins (with onTogglePin)", () => {

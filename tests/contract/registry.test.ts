@@ -249,13 +249,6 @@ describe("registry — write paths (local dev-node only)", () => {
     expect.fail("not implemented — wire local target in setup.ts");
   });
 
-  it.todo("rate_app on a missing domain reverts AppNotFound", async () => {
-    // Defensive: rating an unpublished domain must revert, not silently
-    // record a review against a non-existent entry. The reputation
-    // contract would otherwise accumulate orphaned reviews.
-    expect.fail("not implemented — wire local target in setup.ts");
-  });
-
   it.todo("pin as non-admin reverts Unauthorized", async () => {
     // The pin/unpin gate is `is_sudo_or_admin`. A non-admin caller MUST
     // fail. Without this assertion, a future admin-role refactor could

@@ -53,8 +53,12 @@ import {
   getHandles,
   type DevAccount,
 } from "./setup";
+import { XP_VALUES } from "../../src/xpValues";
 
 const BUILDERS = Number(process.env.LOAD_BUILDERS ?? "50");
+// Raw on-chain points for a first deploy — single source of truth, matches the
+// contract's `DEPLOY_XP`. Each builder publishes exactly one (first) app.
+const DEPLOY_XP = XP_VALUES.deploy;
 
 const RUN = Date.now().toString(36);
 const D = (label: string) => `pts-${RUN}-${label}.dot`;
@@ -201,11 +205,11 @@ describe("registry points_index — leaderboard stress", () => {
         );
       }
 
-      // Read the full leaderboard back. Pre-fix the underlying node-too-large
-      // revert would prevent the writes from completing; even if it didn't,
-      // a paginated read across an over-full tree would fail at the broken
-      // node. Post-fix: page returns BUILDERS entries, all at DEPLOY_XP,
-      // ordered non-increasingly.
+      // Index read at scale must succeed and be correctly ordered — this is the
+      // regression guard for the OrderedIndex stack-overflow / node-too-large
+      // bugs: pre-fix the writes trapped before reaching here, and an over-full
+      // tree would fail this paginated read. Post-fix: a full BUILDERS-sized
+      // page comes back in non-increasing score order.
       const page: any = await reg.getTopBuilders.query(0, BUILDERS);
       expect(page.success).toBe(true);
       const entries = page.value as Array<{ account: string; score: bigint }>;
@@ -214,10 +218,16 @@ describe("registry points_index — leaderboard stress", () => {
       for (let i = 1; i < scores.length; i++) {
         expect(scores[i]).toBeLessThanOrEqual(scores[i - 1]);
       }
-      // Every owner we credited must appear in the page.
-      const seen = new Set(entries.map((e) => e.account.toLowerCase()));
+
+      // Every builder we published must have been credited DEPLOY_XP. Checked
+      // per-account via getPoints, not leaderboard membership: this contract is
+      // long-lived (carries entries from earlier runs / the smoke test), so this
+      // run's builders — all tied at DEPLOY_XP — won't all fit in a single
+      // top-N page once other accounts exist. The per-account read confirms the
+      // award + index update landed for each one regardless of global rank.
       for (const o of owners) {
-        expect(seen.has(o.toLowerCase())).toBe(true);
+        const pts = Number((await reg.getPoints.query(o)).value);
+        expect(pts).toBe(DEPLOY_XP);
       }
     },
     // ~30s/tx finalized on PPN: 50 builders ≈ 25 min, 100 ≈ 50 min. Pin a

@@ -14,12 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-const placeholders = Object.values(
-  import.meta.glob("../assets/placeholders/*.jpg", { eager: true, query: "?url", import: "default" }),
-) as string[];
+// Deterministic per-app fill for the card image area / detail hero when an app
+// has no icon. Reuses the existing --cat-* palette (no new colors); same idea
+// as profileHueForAccount in utils/username.ts.
+const CARD_COLORS = [
+  "var(--cat-social)",
+  "var(--cat-chat)",
+  "var(--cat-site)",
+  "var(--cat-utility)",
+  "var(--cat-gaming)",
+  "var(--cat-marketplace)",
+  "var(--cat-irl)",
+] as const;
 
-export function placeholderFor(domain: string): string {
+export function cardColorForDomain(domain: string): string {
   let hash = 0;
   for (let i = 0; i < domain.length; i++) hash = (hash * 31 + domain.charCodeAt(i)) | 0;
-  return placeholders[Math.abs(hash) % placeholders.length];
+  return CARD_COLORS[Math.abs(hash) % CARD_COLORS.length];
 }

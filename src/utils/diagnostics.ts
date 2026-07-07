@@ -17,7 +17,7 @@
 import * as Sentry from "@sentry/react";
 import type { PolkadotSigner } from "polkadot-api";
 import { SpanOp, isSigningRejection } from "../lib/telemetry";
-import { ensureSignerReady } from "./contracts.ts";
+import { ensureSignerReady, signerManager } from "./contracts.ts";
 import { stringify } from "./stringify.ts";
 
 /**
@@ -34,7 +34,7 @@ import { stringify } from "./stringify.ts";
  */
 /**
  * Pass-through tx options. `waitFor: "best-block"` is recommended for quick
- * interactive writes (star, unstar, set_username) where the UI should refresh
+ * interactive writes (star, set_username) where the UI should refresh
  * the moment the tx is in a best block, even if it's not finalized yet. The
  * sequential publish pipeline still wants finalized so each step sees the
  * previous one's effect — leave the default alone there.
@@ -50,6 +50,12 @@ type TxPassThrough = {
   waitFor?: "best-block" | "finalized";
   gasLimit?: { ref_time: bigint; proof_size: bigint };
   storageDepositLimit?: bigint;
+  /**
+   * SS58 origin for the pre-submit dry-run. Defaults to the connected
+   * account (resolved below) — only set this to override. Omitting it is the
+   * common case; see the auto-injection note in `runTx`.
+   */
+  origin?: string;
 };
 
 export async function runTx<T>(
@@ -69,7 +75,14 @@ export async function runTx<T>(
     async (span: Sentry.Span) => {
       try {
         const signer = await ensureSignerReady();
-        const result = await txFn({ signer, ...txOpts });
+        // Pin the dry-run origin to the connected account. Resolved AFTER
+        // ensureSignerReady so a just-completed connect has populated
+        // selectedAccount. Without an explicit origin the SDK estimates gas as
+        // `defaultOrigin` (the read-only pallet-revive query account), so
+        // any caller()-gated method reverts during the un-submitted dry-run
+        // (Unauthorized / etc.). Callers may override via txOpts.
+        const origin = txOpts?.origin ?? signerManager.getState().selectedAccount?.address;
+        const result = await txFn({ signer, ...txOpts, origin });
         if ((result as { ok?: unknown })?.ok === false) {
           span.setStatus({ code: 2, message: "tx-not-ok" });
           console.error(`[tx ${label}] result.ok=false\n${stringify(result)}`);

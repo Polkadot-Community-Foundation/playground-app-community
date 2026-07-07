@@ -15,70 +15,37 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { NavLink, useLocation } from "react-router-dom";
-import { Gamepad2, Compass, Trophy, User, Info } from "lucide-react";
+import { NAV_ITEMS, type NavItem } from "./navItems";
 
 export default function LeftRail() {
-  const location = useLocation();
-  const path = location.pathname;
-  const isPlayground = path === "/";
-  const isApps = path === "/apps" || path.startsWith("/apps/");
-  const isLeaderboard = path === "/leaderboard";
-  const isProfile = path === "/profile" || path.startsWith("/profile/");
-  const isAbout = path === "/about";
+  const path = useLocation().pathname;
+  const isActive = (i: NavItem) =>
+    path === i.to || (i.activePrefixes?.some((p) => path.startsWith(p)) ?? false);
 
   return (
     <nav className="left-rail" aria-label="Primary">
-      <NavLink
-        to="/"
-        end
-        className={`nav-item${isPlayground ? " active" : ""}`}
-        data-testid="nav-playground"
-        aria-label="Playground"
-        title="Playground"
-      >
-        <Gamepad2 size={20} aria-hidden="true" />
-        <span className="nav-label">Playground</span>
-      </NavLink>
-      <NavLink
-        to="/apps"
-        className={`nav-item${isApps ? " active" : ""}`}
-        data-testid="nav-apps"
-        aria-label="Apps"
-        title="Apps"
-      >
-        <Compass size={20} aria-hidden="true" />
-        <span className="nav-label">Apps</span>
-      </NavLink>
-      <NavLink
-        to="/leaderboard"
-        className={`nav-item${isLeaderboard ? " active" : ""}`}
-        data-testid="nav-leaderboard"
-        aria-label="Leaderboard"
-        title="Leaderboard"
-      >
-        <Trophy size={20} aria-hidden="true" />
-        <span className="nav-label">Leaderboard</span>
-      </NavLink>
-      <NavLink
-        to="/profile"
-        className={`nav-item${isProfile ? " active" : ""}`}
-        data-testid="nav-profile"
-        aria-label="Profile"
-        title="Profile"
-      >
-        <User size={20} aria-hidden="true" />
-        <span className="nav-label">Profile</span>
-      </NavLink>
-      <NavLink
-        to="/about"
-        className={`nav-item${isAbout ? " active" : ""}`}
-        data-testid="nav-about"
-        aria-label="About"
-        title="About"
-      >
-        <Info size={20} aria-hidden="true" />
-        <span className="nav-label">About</span>
-      </NavLink>
+      {NAV_ITEMS.filter((i) => !i.railHidden).map((item) => {
+        const Icon = item.icon;
+        return (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={`nav-item${isActive(item) ? " active" : ""}`}
+            onClick={() => {
+              // Tapping the tab you're already on drops anchor: smooth-scroll
+              // back to the top instead of a no-op re-navigation.
+              if (isActive(item)) window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            data-testid={item.testid}
+            aria-label={item.label}
+            title={item.label}
+          >
+            <Icon size={22} aria-hidden="true" />
+            <span className="nav-label">{item.label}</span>
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }

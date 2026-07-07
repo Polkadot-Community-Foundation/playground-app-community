@@ -113,7 +113,7 @@ So the test coverage split is:
 
 | Surface | Where tests live |
 |---|---|
-| `playground init`, `playground mod`, `playground build`, `playground deploy --playground` (CLI mechanics: tarball download, setup.sh, parallel install, 5-step publish pipeline, PoP QR + session key) | `paritytech/playground-cli` e2e suite |
+| `playground login`, `playground mod`, `playground build`, `playground deploy --playground` (CLI mechanics: tarball download, setup.sh, parallel install, 5-step publish pipeline, PoP QR + session key) | `paritytech/playground-cli` e2e suite |
 | What the playground-app iframe shows post-deploy (registry grid, detail panel, account status, My Apps view, visibility toggle UI, star award UX) | This plan |
 | Registry contract behaviour (publish / unpublish / set_visibility / pin / award_stars / etc.) | This plan, Layer (b) — revive-dev-node |
 | RevX deep-link contract (`revx.dev/editor?mod=<domain>`) | RevX team's repo |
@@ -207,7 +207,7 @@ Spec: "Mod & deploy" / "Hide / show own app" V1 P0. Signed-in user opens their M
 
 ### 7.5 Star — cumulative awards
 
-Spec: "Star — one-way (no unstar)" V1 P0. User awards stars to an app from the detail panel; cumulative count goes up, owner gets points.
+Spec: "Star — permanent one-way" V1 P0. User awards stars to an app from the detail panel; cumulative count goes up, owner gets points.
 
 Current state: `rate.spec.ts` covers the *current* `@mock/reputation` averaged-rating mechanic. The planned points/leaderboard work replaces this with cumulative stars.
 
@@ -454,7 +454,7 @@ Vitest harness landed alongside Layer (d) — see `vitest.config.ts` + `pnpm tes
 
 | File | Status | Tests |
 |---|---|---|
-| `utils/placeholders.ts` | ✓ active (5 tests) | Deterministic per-domain mapping; assets/placeholders/ path; distribution across set; empty-domain edge case; Unicode-domain edge case |
+| `utils/placeholders.ts` | ✓ active (5 tests) | `cardColorForDomain`: deterministic per-domain mapping; --cat-* palette value; distribution across set; empty-domain edge case; Unicode-domain edge case |
 | `utils/hooks.ts` (`useIntersectionObserver`) | ✓ active (5 tests) | Observes when enabled; bails when disabled; callback fires on `isIntersecting=true` only; disconnect on unmount; documented rootMargin/threshold values |
 | `utils/diagnostics.ts` (`stringify`) | ✓ active (8 tests) | Plain object → JSON; walks non-enumerable Error props (name/message/cause/data); omits stack; bigints → string; Uint8Array → 0x hex; circular ref → `[Circular]`; falls back to error string when serialization throws |
 | `utils/contractManifest.ts` | ✓ active (6 tests) | Resolves live addresses; omits failed reads; omits None Options; overwrites manifest addresses; falls back to original when all reads fail; does not mutate input (structuredClone path) |

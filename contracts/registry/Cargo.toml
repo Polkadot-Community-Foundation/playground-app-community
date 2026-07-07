@@ -8,7 +8,7 @@ license.workspace = true
 
 [package.metadata.cdm]
 package = "@w3s/playground-registry"
-dependencies = ["@mock/reputation"]
+dependencies = []
 
 [dependencies]
 cdm.workspace = true

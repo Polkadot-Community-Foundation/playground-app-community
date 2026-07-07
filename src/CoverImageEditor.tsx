@@ -138,7 +138,7 @@ export default function CoverImageEditor({ currentCoverUrl, onSave, onClose, onC
       return;
     }
     if (file.size > MAX_INPUT_BYTES) {
-      setErrorMessage("Image is too large — keep it under 20 MB.");
+      setErrorMessage("Image is too large. Keep it under 20 MB.");
       return;
     }
     const objectUrl = URL.createObjectURL(file);
@@ -217,18 +217,10 @@ export default function CoverImageEditor({ currentCoverUrl, onSave, onClose, onC
     let last: Uint8Array | null = null;
     for (const step of ENCODE_STEPS) {
       const bytes = await encodeAt(step.width, step.quality);
-      const sizeKB = (bytes.byteLength / 1024).toFixed(1);
-      const budgetKB = (MAX_OUTPUT_BYTES / 1024).toFixed(0);
       const fits = bytes.byteLength <= MAX_OUTPUT_BYTES;
-      console.log(
-        `[cover-editor] encode ${step.width}x${step.width / COVER_ASPECT} @ q=${step.quality} → ${sizeKB} KB (budget ${budgetKB} KB) ${fits ? "✓" : "↓ retry smaller"}`,
-      );
       last = bytes;
       if (fits) return bytes;
     }
-    console.warn(
-      `[cover-editor] every encode step exceeded ${(MAX_OUTPUT_BYTES / 1024).toFixed(0)} KB — shipping the smallest variant anyway`,
-    );
     return last ?? (await encodeAt(ENCODE_STEPS[ENCODE_STEPS.length - 1].width, ENCODE_STEPS[ENCODE_STEPS.length - 1].quality));
   };
 
@@ -238,14 +230,12 @@ export default function CoverImageEditor({ currentCoverUrl, onSave, onClose, onC
     setIsSaving(true);
     try {
       const bytes = await renderToBytes();
-      console.log(`[cover-editor] uploading ${bytes.byteLength} bytes (${(bytes.byteLength / 1024).toFixed(1)} KB)`);
       await onSave(bytes);
     } catch (err) {
-      console.warn("[cover-editor] save failed", err);
       // A cancelled host permission dialog is a user gesture, not a failure —
       // dismiss the editor and let the parent surface a short toast instead
       // of keeping the modal open in an unrecoverable state.
-      if (err instanceof Error && err.name === "PermissionDeniedError") {
+      if (err instanceof Error && (err.name === "PermissionDeniedError" || err.name === "InsufficientFundsError")) {
         setIsSaving(false);
         onCancelled?.(err.message);
         onClose();

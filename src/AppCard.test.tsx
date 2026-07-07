@@ -27,10 +27,16 @@ vi.mock("@sentry/react", () => ({
     fn({ setStatus: vi.fn(), setAttribute: vi.fn() }),
   ),
 }));
-vi.mock("@novasamatech/host-api-wrapper", () => ({
-  hostApi: {
-    navigateTo: vi.fn(() => Promise.resolve({ isErr: () => false })),
-  },
+vi.mock("@parity/product-sdk-host", () => ({
+  // Tests run outside a host container, so the in-host nav branch is never
+  // taken; the stub just lets the import resolve and stays defensive if a
+  // handler ever fires.
+  isInsideContainerSync: vi.fn(() => false),
+  getTruApi: vi.fn(() =>
+    Promise.resolve({
+      navigateTo: vi.fn(() => Promise.resolve({ isErr: () => false })),
+    }),
+  ),
 }));
 vi.mock("./lib/telemetry", () => ({
   journeyTracker: {
@@ -56,11 +62,28 @@ vi.mock("./utils", async () => {
   const placeholders = await vi.importActual<typeof import("./utils/placeholders")>(
     "./utils/placeholders",
   );
+  const readme = await vi.importActual<typeof import("./utils/readme")>(
+    "./utils/readme",
+  );
   return {
-    placeholderFor: placeholders.placeholderFor,
-    useIconUrl: () => null, // null → AppCard falls back to placeholderFor
+    cardColorForDomain: placeholders.cardColorForDomain,
+    useIconUrl: () => null, // null → AppCard shows the per-app colour block
+    readmeBlurb: readme.readmeBlurb, // pure, no chain dep
   };
 });
+vi.mock("./utils/contracts.ts", () => ({
+  contractsReady: Promise.resolve({}),
+  registryReady: Promise.resolve({}),
+  signerManager: {
+    connect: vi.fn(() => Promise.resolve()),
+    getState: vi.fn(() => ({ status: "disconnected", selectedAccount: null })),
+    subscribe: vi.fn(() => () => undefined),
+  },
+  useSignerState: vi.fn(() => ({ status: "disconnected", selectedAccount: null, accounts: [], error: null })),
+}));
+vi.mock("./utils/event-stream/EventStream.tsx", () => ({
+  default: () => null,
+}));
 
 import { AppCard, VISIBILITY_PRIVATE } from "./App";
 import { VISIBILITY_PUBLIC, type AppEntry } from "./registryTypes";
@@ -81,11 +104,9 @@ describe("AppCard — rendering with no metadata loaded", () => {
     expect(screen.getByTestId("card-name")).toHaveTextContent("example");
   });
 
-  it("falls back to the default copy as the description when no metadata", () => {
+  it("renders an empty description blurb when no metadata", () => {
     render(<AppCard entry={baseEntry} onSelect={vi.fn()} />);
-    expect(screen.getByTestId("card-desc")).toHaveTextContent(
-      /customise and deploy your own version/i,
-    );
+    expect(screen.getByTestId("card-desc")).toHaveTextContent("");
   });
 
   it("omits the tag chip when no metadata.tag", () => {
@@ -134,9 +155,28 @@ describe("AppCard — rendering with metadata loaded", () => {
     expect(screen.getByTestId("card-desc")).toHaveTextContent("A real description");
   });
 
+  it("derives the blurb from the README when description is absent", () => {
+    const withReadme: AppDetails = {
+      metadata: {
+        name: "Example App",
+        readme: "# Example App\n\nA neat little game you can mod and deploy.",
+      },
+    };
+    render(<AppCard entry={baseEntry} details={withReadme} onSelect={vi.fn()} />);
+    expect(screen.getByTestId("card-desc")).toHaveTextContent(
+      "A neat little game you can mod and deploy.",
+    );
+  });
+
   it("renders metadata.tag when present", () => {
     render(<AppCard entry={baseEntry} details={details} onSelect={vi.fn()} />);
     expect(screen.getByTestId("card-tag")).toHaveTextContent("social");
+  });
+
+  it("renders the 'site' category chip (Site Builder deploys are a visible category)", () => {
+    const siteDetails: AppDetails = { metadata: { name: "A Site", tag: "site" } };
+    render(<AppCard entry={baseEntry} details={siteDetails} onSelect={vi.fn()} />);
+    expect(screen.getByTestId("card-tag")).toHaveTextContent("site");
   });
 
   it("sets data-metadata-loaded='true' when metadata is present", () => {

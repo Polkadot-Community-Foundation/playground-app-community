@@ -37,11 +37,10 @@ import {
   type CdmJson,
 } from "@parity/product-sdk-contracts";
 import { seedToAccount } from "@parity/product-sdk-keys";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { readFileSync } from "node:fs";
 import cdmJson from "../cdm.json" with { type: "json" };
 import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.ts";
-import { assetHubWsUrl, DEV_ACCOUNTS } from "./_lib.ts";
+import { assetHubDescriptor, assetHubWsUrl, DEV_ACCOUNTS, resolveChain } from "./_lib.ts";
 
 // ---------------------------------------------------------------------------
 // Snapshot types — accept both format_version 1 and 2.
@@ -93,7 +92,6 @@ interface Snapshot {
   format_version: 1 | 2;
   exported_at: string;
   source: { network: string; package: string; address: `0x${string}`; version: number };
-  context_id: `0x${string}`;
   app_count_onchain: number;
   apps: ExportedApp[];
   pinned: string[];
@@ -158,24 +156,25 @@ console.log(`Snapshot     : ${snapshotPath}`);
 console.log(`  format_ver : ${snapshot.format_version}`);
 console.log(`  exported   : ${snapshot.exported_at}`);
 console.log(`  source     : ${snapshot.source.address}`);
-console.log(`  context_id : ${snapshot.context_id}`);
 console.log(`  apps       : ${snapshot.apps.length} (${snapshot.notes.public_apps} public, ${snapshot.notes.private_apps} private)`);
 console.log(`  pinned     : ${snapshot.pinned.length}`);
 console.log(`  leaderboard: ${leaderboard.length}`);
 console.log(`  social     : ${social.length}`);
 console.log(`  usernames  : ${usernames.length}`);
 console.log(`  lineage    : ${lineage.length}`);
+const chain = resolveChain();
 console.log(`Package      : ${packageName}`);
+console.log(`Chain        : ${chain}`);
 console.log(`Caller       : ${origin}  (${callerH160})`);
 console.log(`Mode         : ${dryRun ? "DRY-RUN (no transactions)" : "LIVE"}`);
 console.log();
 
-const client = createClient(getWsProvider(assetHubWsUrl()));
+const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
 const manager = await ContractManager.fromLiveClient(
   cdmJson as unknown as CdmJson,
   client,
-  paseo_asset_hub,
+  assetHubDescriptor(chain),
   {
     defaultSigner: signer,
     defaultOrigin: origin,
@@ -191,19 +190,6 @@ try {
 
   if (targetAddr.toLowerCase() === snapshot.source.address.toLowerCase()) {
     throw new Error(`Target registry == snapshot source. Refusing to import into the same contract.`);
-  }
-
-  // context_id mismatch means @mock/reputation entries scoped to the old id
-  // stay unreachable from the new registry. App data still migrates cleanly.
-  const ctxRes = await registry.getContextId.query();
-  if (!ctxRes.success) throw new Error(`getContextId query failed`);
-  if (ctxRes.value.toLowerCase() !== snapshot.context_id.toLowerCase()) {
-    console.warn(`⚠ context_id mismatch:`);
-    console.warn(`    snapshot : ${snapshot.context_id}`);
-    console.warn(`    target   : ${ctxRes.value}`);
-    console.warn(`  reputation history scoped to the old id will NOT be reachable from the new registry.\n`);
-  } else {
-    console.log(`context_id matches (${ctxRes.value})\n`);
   }
 
   // Sudo check — bail early with a useful message instead of letting the
@@ -310,8 +296,8 @@ try {
   // -------------------------------------------------------------------------
   // 3. Points
   // -------------------------------------------------------------------------
-  // Points MUST come after apps. `import_one` (called per app above) seeds a
-  // launch-point award based on is_moddable. `importPoints` then SETs the
+  // Points MUST come after apps. `import_one` (called per app above) may seed a
+  // launch-point award for imported app owners. `importPoints` then SETs the
   // authoritative total from the snapshot, overwriting that seed. Reversing
   // the order would leave the launch-point seed un-overwritten for any account
   // that had a positive balance before the migration.
@@ -356,8 +342,9 @@ try {
   // -------------------------------------------------------------------------
   // 3b. Leaderboard reconciliation — evict phantom accounts
   // -------------------------------------------------------------------------
-  // `import_one` (called per app above) RE-AWARDS launch points to every
-  // public app owner regardless of whether they earned points on the source.
+  // `import_one` (called per app above) RE-AWARDS launch points to app owners
+  // regardless of public/private visibility or whether they earned points on
+  // the source.
   // The blacklist was seeded above (step 0) so dev accounts are already
   // blocked from earning during importApps. However any non-dev account that
   // wasn't on the source leaderboard could still appear (e.g. app owners
@@ -377,22 +364,20 @@ try {
     );
 
     // Build the phantom set DETERMINISTICALLY from the snapshot rather than a
-    // live read. `import_one` re-awards launch points to EVERY public app owner
-    // (visibility >= 1), so any public owner that is NOT a legit source
-    // leaderboard account is a phantom that must be evicted back to 0. Deriving
-    // this from snapshot.apps (not getTopBuilders) makes reconciliation immune
-    // to best-block read lag — a live read right after the import txs can miss
+    // live read. `import_one` re-awards launch points to app owners regardless
+    // of visibility, so any owner that is NOT a legit source leaderboard
+    // account is a phantom that must be evicted back to 0. Deriving this from
+    // snapshot.apps (not getTopBuilders) makes reconciliation immune to
+    // best-block read lag — a live read right after the import txs can miss
     // freshly-awarded entries and silently leave phantoms behind (observed on
     // the @staging dress rehearsal: a non-dev owner survived at 2 points).
-    // IMPORTANT: this scrubs POINTS only. The apps themselves — including
-    // dev-owned apps — remain imported and visible in the registry; we only
-    // zero out leaderboard/points entries for accounts that had none on source.
+    // IMPORTANT: this scrubs leaderboard/points entries and their matching
+    // deploy-award counters only. The apps themselves — including dev-owned
+    // apps — remain imported and visible in the registry.
     const evict = new Set<string>();
     for (const a of snapshot.apps) {
-      if (a.visibility >= 1) {
-        const owner = a.owner.toLowerCase();
-        if (!snapshotAccounts.has(owner)) evict.add(owner);
-      }
+      const owner = a.owner.toLowerCase();
+      if (!snapshotAccounts.has(owner)) evict.add(owner);
     }
 
     // Belt-and-suspenders: also fold in anything currently on the live
@@ -424,7 +409,7 @@ try {
     const phantoms = [...evict];
     if (phantoms.length > 0) {
       console.log(
-        `\nReconciling leaderboard: evicting ${phantoms.length} phantom account(s) (public owners / live entries not on the source leaderboard)...`,
+        `\nReconciling leaderboard: evicting ${phantoms.length} phantom account(s) (app owners / live entries not on the source leaderboard)...`,
       );
       for (let pi = 0; pi < phantoms.length; pi++) {
         const phantom = phantoms[pi];
@@ -437,7 +422,17 @@ try {
               TX_OPTS,
             ),
         );
-        console.log(`  ✓ evicted ${phantom}${isDev ? " [dev account]" : ""}  ${res.txHash}`);
+        const resetDeployCount =
+          typeof registry.adminSetDeployAwardCount?.tx === "function"
+            ? await submitIdempotent(
+                `adminSetDeployAwardCount(${phantom}, 0)`,
+                () => registry.adminSetDeployAwardCount.tx(phantom as `0x${string}`, 0, TX_OPTS),
+              )
+            : null;
+        console.log(
+          `  ✓ evicted ${phantom}${isDev ? " [dev account]" : ""}  ${res.txHash}` +
+            (resetDeployCount ? `; deploy-award count reset ${resetDeployCount.txHash}` : ""),
+        );
         if (pi + 1 < phantoms.length) await new Promise((r) => setTimeout(r, INTER_TX_DELAY_MS));
       }
     } else {

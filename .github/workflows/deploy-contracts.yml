@@ -30,12 +30,17 @@ on:
     workflow_dispatch:
         inputs:
             network:
-                description: "CDM network to deploy to (Summit == 'w3s'; PCF CI is Summit-only)"
+                description: "CDM network to deploy to (e.g. paseo, polkadot, local)"
                 required: false
-                default: "w3s"
+                default: "paseo"
                 type: string
             force_cli_manifest_release:
                 description: "Also dispatch the CLI manifest release workflow even if cdm.json did not change"
+                required: false
+                default: false
+                type: boolean
+            skip_deploy:
+                description: "Skip cdm deploy (registry already deployed); run cdm i + migrate only"
                 required: false
                 default: false
                 type: boolean
@@ -52,10 +57,9 @@ permissions:
     contents: write
     pull-requests: write
 
-# PCF CI is Summit-only. In the CDM toolchain the Summit network is keyed
-# `w3s` (see package.json `deploy:w3s`). Overridable via workflow_dispatch input.
+# Network defaults to paseo; overridable via workflow_dispatch input
 env:
-    CDM_NETWORK: ${{ inputs.network || 'w3s' }}
+    CDM_NETWORK: ${{ inputs.network || 'paseo' }}
 
 concurrency:
     group: deploy-contracts-${{ github.event.pull_request.number || github.ref }}
@@ -127,6 +131,25 @@ jobs:
                   export PATH="$HOME/.cdm/bin:$PATH"
                   cdm --version
 
+            # CDM's install.sh installs cargo-pvm-contract from `main` (the new
+            # pvm-contract-sdk lineage), which can't build this repo's older
+            # `pvm_contract`-based contract. Reinstall the matching CLI; the rev
+            # is derived from Cargo.lock by the script (single source of truth).
+            - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
+              if: ${{ inputs.skip_deploy != true }}
+              run: bash scripts/install-pvm-contract-cli.sh
+
+            # Summit: cdm's registry reads (version-count etc.) use a read origin
+            # that must be MAPPED on PolkaVM, or they revert AccountUnmapped. Set
+            # cdm's account to the deploy key and ensure it's mapped before any
+            # cdm read/deploy on w3s. Idempotent (5Fk8 is already mapped on-chain).
+            - name: Map cdm deploy account (Summit read/deploy origin)
+              env:
+                  MNEMONIC: ${{ secrets.MNEMONIC }}
+              run: |
+                  cdm account set -n ${{ env.CDM_NETWORK }} --mnemonic "$MNEMONIC"
+                  cdm account map -n ${{ env.CDM_NETWORK }} || echo "account already mapped (ok)"
+
             # Populates ~/.cdm/ cache with ABIs for cdm::import!() macros
             - name: Install contract dependencies
               run: cdm i -n ${{ env.CDM_NETWORK }}
@@ -168,35 +191,62 @@ jobs:
             - name: Install JS dependencies
               run: pnpm install --frozen-lockfile
 
-            - name: Install CDM CLI
+            - name: Setup Bun (PCF cdm CLI runs TS directly)
+              uses: oven-sh/setup-bun@v2
+              with:
+                  # Pin 1.2.9: bun 1.3.x mishandles Summit's missing
+                  # ReviveApi_trace_call (the InkSdk read fallback), failing the
+                  # registry export with "Can't find message undefined". 1.2.9
+                  # tolerates it (verified locally).
+                  bun-version: "1.2.9"
+
+            # Use the PCF FORK's cdm, NOT upstream's release binary. Upstream cdm
+            # reads registry views with the unmapped //Alice origin, which reverts
+            # Revive.AccountUnmapped on Summit. The fork carries
+            # `fix(cli): read registry origin-free in cdm install (#6)` — a
+            # pallet-revive mapping-free query fallback — which is fork-only and
+            # not in any release, so install.sh never gets it. The fork cdm runs
+            # TypeScript directly via bun.
+            - name: Install PCF cdm CLI (origin-free Summit reads)
               run: |
-                  curl -fsSL https://raw.githubusercontent.com/paritytech/contract-dependency-manager/main/install.sh | bash
+                  set -euo pipefail
+                  corepack enable
+                  git clone --depth 1 https://github.com/Polkadot-Community-Foundation/contract-dependency-manager "$RUNNER_TEMP/cdm-fork"
+                  ( cd "$RUNNER_TEMP/cdm-fork" && corepack pnpm install --frozen-lockfile )
+                  # The CLI imports the workspace libs by their built dist (main:
+                  # ./dist/index.js), so build them before bundling the CLI; and
+                  # generate the gitignored src/generated/templates.ts via embed-templates.
+                  ( cd "$RUNNER_TEMP/cdm-fork" && corepack pnpm --filter @parity/cdm-utils --filter @parity/cdm-env --filter @parity/cdm-builder --filter @parity/cdm-codegen build )
+                  ( cd "$RUNNER_TEMP/cdm-fork/src/apps/cli" && corepack pnpm embed-templates )
+                  mkdir -p "$HOME/.cdm/bin"
+                  # Compile a self-contained binary (bundles the workspace deps in)
+                  # so there's no runtime module resolution / bun-version sensitivity.
+                  ( cd "$RUNNER_TEMP/cdm-fork/src/apps/cli" && bun build --compile src/cli.ts --outfile "$HOME/.cdm/bin/cdm" )
                   echo "$HOME/.cdm/bin" >> "$GITHUB_PATH"
-                  export PATH="$HOME/.cdm/bin:$PATH"
-                  cdm --version
+                  "$HOME/.cdm/bin/cdm" --version
+
+            # Reinstall the matching cargo-pvm-contract (rev derived from Cargo.lock)
+            # for this repo's pvm_contract-based contract.
+            - name: Pin cargo-pvm-contract to the pvm_contract dep lineage
+              if: ${{ inputs.skip_deploy != true }}
+              run: bash scripts/install-pvm-contract-cli.sh
 
             - name: Install contract dependencies
               run: cdm i -n ${{ env.CDM_NETWORK }}
 
             # cdm deploy: build -> deploy to Asset Hub -> publish metadata to Bulletin -> register
             # Retries handle transient RPC/network failures
+            # skip_deploy=true: the new registry is already deployed+registered;
+            # skip the (non-idempotent) cdm deploy and only run cdm i + migrate
+            # against the existing latest registry version.
             - name: Deploy contracts
+              if: ${{ inputs.skip_deploy != true }}
               uses: nick-fields/retry@v3
               with:
                   timeout_minutes: 15
                   max_attempts: 3
                   retry_wait_seconds: 30
                   command: cdm deploy -n ${{ env.CDM_NETWORK }} --suri "$MNEMONIC"
-              env:
-                  MNEMONIC: ${{ secrets.MNEMONIC }}
-
-            # Authorise the freshly-deployed registry as an operator on the
-            # `playground.dot` context (the context itself is owned by an EOA
-            # and registered once via `register-context.ts`).
-            # `add` with no positional arg reads the registry address from
-            # cdm.json; the script is idempotent on no-op redeploys.
-            - name: Add registry as operator on playground.dot context
-              run: pnpm tsx scripts/register-context.ts add
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
 
@@ -208,15 +258,18 @@ jobs:
               id: migrate-registry
               run: |
                   set -e
-                  OLD_ADDR=$(git show HEAD:cdm.json 2>/dev/null | node -e "
-                    let cdm; try { cdm = JSON.parse(require('fs').readFileSync(0,'utf8')); } catch { process.exit(0); }
-                    const t = Object.values(cdm.contracts ?? {})[0];
-                    process.stdout.write(t?.['@w3s/playground-registry']?.address ?? '');
-                  " || true)
+                  # PCF/Summit: this fork is an orphan-history re-baseline of the
+                  # upstream snapshot, so HEAD's cdm.json does NOT carry the live
+                  # Summit registry address. Pin the prior registry explicitly to
+                  # the live @w3s/playground-registry on Summit Asset Hub so the
+                  # migration exports from the real on-chain state.
+                  OLD_ADDR=0x14C27954796575C26c85eD9BC6441522e174a0f3
                   NEW_ADDR=$(node -e "
                     const cdm = require('./cdm.json');
-                    const t = Object.values(cdm.contracts)[0];
-                    process.stdout.write(t['@w3s/playground-registry'].address);
+                    // fork cdm.json is flat: contracts['@w3s/playground-registry'].address
+                    const e = (cdm.contracts || {})['@w3s/playground-registry'];
+                    if (!e || !e.address) process.exit(0);
+                    process.stdout.write(e.address);
                   ")
 
                   echo "Prior registry : ${OLD_ADDR:-<none>}"
@@ -234,19 +287,31 @@ jobs:
                   mkdir -p migration
                   SNAPSHOT="migration/snapshot-${{ github.run_id }}.json"
 
-                  echo "::group::Export from $OLD_ADDR"
-                  pnpm tsx scripts/export-registry-state.ts --address "$OLD_ADDR" --out "$SNAPSHOT"
-                  echo "::endgroup::"
+                  # Prefer a committed seed snapshot (captured out-of-band) — the
+                  # live export of the OLD v0 registry breaks once cdm.json carries
+                  # the NEW v1 ABI (it queries v0 with the wrong ABI). Fall back to
+                  # a live export only if no seed snapshot is committed.
+                  if [ -f migration/seed-snapshot.json ]; then
+                    echo "Using committed seed snapshot (skipping live export)"
+                    SNAPSHOT=migration/seed-snapshot.json
+                  else
+                    echo "::group::Export from $OLD_ADDR"
+                    bun scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
+                    echo "::endgroup::"
+                  fi
 
                   APP_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').apps.length))")
                   PIN_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').pinned.length))")
                   echo "::group::Import ${APP_COUNT} apps + ${PIN_COUNT} pinned into $NEW_ADDR"
-                  pnpm tsx scripts/import-registry-state.ts "$SNAPSHOT"
+                  bun scripts/import-registry-state.ts "$SNAPSHOT"
                   echo "::endgroup::"
 
                   echo "::notice::Migrated ${APP_COUNT} apps + ${PIN_COUNT} pinned from $OLD_ADDR to $NEW_ADDR"
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
+                  # Summit: import-registry-state.ts reads assetHubWsUrl() which
+                  # defaults to Paseo; point it at Summit Asset Hub.
+                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
 
             # Keep the snapshot as a workflow artifact so a failed import can
             # be replayed manually without re-exporting from the prior chain.
@@ -279,11 +344,11 @@ jobs:
                   fi
 
             # Keep the CLI's bundled contract ABI/metadata fresh after the
-            # live Summit registry changes. The CLI workflow handles no-op
+            # live Paseo registry changes. The CLI workflow handles no-op
             # checks and performs the patch release.
             - name: Trigger CLI contract manifest release
               if: |
-                  env.CDM_NETWORK == 'w3s'
+                  env.CDM_NETWORK == 'paseo'
                   && (
                     steps.commit-cdm-json.outputs.pushed == 'true'
                     || (github.event_name == 'workflow_dispatch' && inputs.force_cli_manifest_release)

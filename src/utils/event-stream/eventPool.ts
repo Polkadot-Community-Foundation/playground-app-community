@@ -119,6 +119,34 @@ export function createMixedEventStreamReplayItems(
   return out;
 }
 
+export function createUniqueMixedEventStreamReplayItems(
+  items: readonly EventStreamItem[],
+  options: LoopingEventStreamPoolOptions = {},
+  cursor: EventStreamReplayCursor = createEventStreamReplayCursor(),
+): readonly EventStreamItem[] {
+  const itemCount = Math.max(0, options.itemCount ?? items.length);
+  if (itemCount === 0 || items.length === 0) return [];
+
+  const availableIds = new Set(items.map((item) => item.id));
+  const seenIds = new Set<string>();
+  const out: EventStreamItem[] = [];
+  const maxAttempts = items.length * Math.max(itemCount, availableIds.size, 1);
+
+  for (
+    let attempts = 0;
+    attempts < maxAttempts && out.length < itemCount && seenIds.size < availableIds.size;
+    attempts += 1
+  ) {
+    const item = nextEventStreamReplayItem(items, cursor);
+    if (!item) break;
+    if (seenIds.has(item.id)) continue;
+    seenIds.add(item.id);
+    out.push(item);
+  }
+
+  return out;
+}
+
 export function createLoopingEventStreamPool(
   pool: readonly EventStreamItem[],
   options: LoopingEventStreamPoolOptions = {},

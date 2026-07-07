@@ -77,9 +77,10 @@ describe("registry event decoding", () => {
       "ModPointAwarded",
       "StarPointAwarded",
       "StarPointRefunded",
-      "UsernameBonusAwarded",
-      "UsernameSet",
-      "UsernameCleared",
+      "IdentityLinked",
+      "IdentityCleared",
+      "IdentityBonusAwarded",
+      "FaucetFailed",
     ]);
   });
 
@@ -102,16 +103,54 @@ describe("registry event decoding", () => {
     });
   });
 
-  it("decodes username events as usernames, not domains", () => {
+  it("decodes identity events as recipient-only, never a domain (no String to decode)", () => {
+    // Payload = Address(20) + root_pubkey([u8;32]). Crucially the 32 root bytes
+    // must NOT be parsed as a Compact<u32> len + utf8 String — only the leading
+    // address is read, and no `primaryDomain` is surfaced.
+    const root = new Uint8Array(32).fill(0x99);
     const decoded = decodeRegistryEventData(
-      "UsernameSet",
-      new TextEncoder().encode("alice"),
+      "IdentityLinked",
+      concat(address(0xab), root),
     );
     expect(decoded).toMatchObject({
-      name: "UsernameSet",
-      payload: { username: "alice" },
+      name: "IdentityLinked",
+      primaryAccount: "0xabababababababababababababababababababab",
+      payload: { recipient: "0xabababababababababababababababababababab" },
     });
     expect(decoded.primaryDomain).toBeUndefined();
+  });
+
+  it("decodes all identity events without throwing on the 32-byte root", () => {
+    const root = new Uint8Array(32).fill(0x00); // a zero root must not break decode
+    for (const name of [
+      "IdentityLinked",
+      "IdentityCleared",
+      "IdentityBonusAwarded",
+    ] as const) {
+      const decoded = decodeRegistryEventData(name, concat(address(0xcd), root));
+      expect(decoded.name).toBe(name);
+      expect(decoded.primaryDomain).toBeUndefined();
+      expect(decoded.payload).toMatchObject({
+        recipient: "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      });
+    }
+  });
+
+  it("tags the bonus identity event with pointDelta:1 (drives the XP celebration)", () => {
+    // Regression guard: celebrationForEvent gates on pointDelta === 1, so the
+    // award event MUST carry it from the real decoder — otherwise the XP
+    // confetti silently never fires. Reveal (IdentityBonusAwarded) awards;
+    // Linked/Cleared are not awards and must stay pointDelta-less.
+    const root = new Uint8Array(32).fill(0x99);
+    expect(
+      decodeRegistryEventData("IdentityBonusAwarded", concat(address(0xcd), root)).pointDelta,
+    ).toBe(1);
+    expect(
+      decodeRegistryEventData("IdentityLinked", concat(address(0xcd), root)).pointDelta,
+    ).toBeUndefined();
+    expect(
+      decodeRegistryEventData("IdentityCleared", concat(address(0xcd), root)).pointDelta,
+    ).toBeUndefined();
   });
 
   it("decodes point award payloads with recipient and domain", () => {
@@ -156,6 +195,25 @@ describe("registry event decoding", () => {
     });
   });
 
+  it("decodes FaucetFailed as recipient-only (no domain, no pointDelta)", () => {
+    // Payload = recipient: Address(20) + amount: u128 (16 bytes LE). Only the
+    // recipient is surfaced (as primaryAccount) so the connected user's own dry
+    // faucet can be matched; there is no String/domain and no XP movement.
+    const amount = new Uint8Array(16);
+    amount[0] = 0x10; // little-endian low byte — value doesn't matter here
+    const decoded = decodeRegistryEventData(
+      "FaucetFailed",
+      concat(address(0xab), amount),
+    );
+    expect(decoded).toMatchObject({
+      name: "FaucetFailed",
+      primaryAccount: "0xabababababababababababababababababababab",
+      payload: { recipient: "0xabababababababababababababababababababab", amount: 0x10n },
+    });
+    expect(decoded.primaryDomain).toBeUndefined();
+    expect(decoded.pointDelta).toBeUndefined();
+  });
+
   it("decodes star refunds as negative point movement", () => {
     const decoded = decodeRegistryEventData(
       "StarPointRefunded",
@@ -177,18 +235,25 @@ describe("registry event decoding", () => {
 
   it("decodes from a topic and ignores unknown topics", () => {
     const decoded = decodeRegistryEventFromTopic(
-      registryEventTopic("UsernameCleared"),
-      new TextEncoder().encode("alice"),
+      registryEventTopic("IdentityCleared"),
+      concat(address(0xee), new Uint8Array(32)),
     );
-    expect(decoded?.name).toBe("UsernameCleared");
+    expect(decoded?.name).toBe("IdentityCleared");
     expect(decodeRegistryEventFromTopic("0x" + "11".repeat(32), new Uint8Array())).toBeNull();
   });
 
-  it("marks only SCALE payload events as typed", () => {
+  it("marks only SCALE String-payload events as typed (identity events stay OUT)", () => {
+    // Membership drives `decodeFirstDomainAfterAddress` in the dispatcher.
+    // Identity events have no String field, so they must NOT be typed —
+    // otherwise the 32-byte root would be misparsed as a length+utf8 String.
     expect(TYPED_PAYLOAD_EVENTS.has("DeployPointAwarded")).toBe(true);
     expect(TYPED_PAYLOAD_EVENTS.has("ModPointAwarded")).toBe(true);
-    expect(TYPED_PAYLOAD_EVENTS.has("UsernameSet")).toBe(false);
+    expect(TYPED_PAYLOAD_EVENTS.has("IdentityLinked")).toBe(false);
+    expect(TYPED_PAYLOAD_EVENTS.has("IdentityCleared")).toBe(false);
+    expect(TYPED_PAYLOAD_EVENTS.has("IdentityBonusAwarded")).toBe(false);
     expect(TYPED_PAYLOAD_EVENTS.has("Published")).toBe(false);
+    // FaucetFailed also has no String field (recipient + u128) — must stay OUT.
+    expect(TYPED_PAYLOAD_EVENTS.has("FaucetFailed")).toBe(false);
   });
 
   it("extracts only best-block ContractEmitted payload batches", () => {

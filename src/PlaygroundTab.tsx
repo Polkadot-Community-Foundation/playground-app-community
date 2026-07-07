@@ -14,13 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { Square } from "lucide-react";
-import { useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Laptop, Square } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import CliInstallInstructions from "./CliInstallInstructions";
 import CodeSnippet from "./CodeSnippet";
 import InstructionTabs from "./InstructionTabs";
 import IslandPortal from "./IslandPortal";
+import PreHero, { hasSeenPreHero } from "./PreHero";
 import JourneySection from "./JourneySection";
 import PlaygroundToc from "./PlaygroundToc";
 import { QUEST_COLORS } from "./questPalette";
@@ -28,7 +29,9 @@ import { XP_VALUES } from "./xpValues";
 import SiteFooter from "./SiteFooter";
 import XpPrizesSection from "./XpPrizesSection";
 import { handleExternalClick } from "./utils/externalNavigation";
-import { CLI_COMMAND, NO_CODE_APP_DOMAIN, REVX_URL, TUTORIAL_DOMAIN } from "./config";
+import { useOnboarding } from "./OnboardingProvider";
+import { scrollToSection, useTaskProgress, useUnlockExpand } from "./utils";
+import { CLI_COMMAND, DOCS_URL, REVX_URL, TUTORIAL_DOMAIN } from "./config";
 
 const TUTORIAL_SLUG = TUTORIAL_DOMAIN.replace(/\.dot$/, "");
 const TUTORIAL_REVX_URL = `${REVX_URL}/editor?mod=${encodeURIComponent(TUTORIAL_DOMAIN)}`;
@@ -37,7 +40,7 @@ const AGENT_PROMPT = "Walk me through the tutorial in this repo.";
 /**
  * Playground tab — the task / XP / prizes journey. The hero island sits at the
  * top, the XP & Prizes card is the first text, then each journey step, with a
- * sticky table of contents on the right. Deep links (the TOC and the
+ * sticky table of contents on the right. Cross-route deep links (the
  * Leaderboard's "How XP & Prizes work" link) arrive as `?section=<id>` and are
  * scrolled into view on mount.
  */
@@ -49,26 +52,67 @@ interface PlaygroundTabProps {
 }
 
 export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabProps) {
-  const [searchParams] = useSearchParams();
-  const section = searchParams.get("section");
+  // Per-task completion (seeded synchronously from the last-known snapshot —
+  // checks and collapsed cards are correct on the first frame; chain reads
+  // reconcile in the background). Detection-only — no manual self-attest.
+  const { tasks } = useTaskProgress(account, {
+    pointsRefresh,
+    connectedAccount: account,
+  });
 
+  // Becoming a builder is the unlock gate: until the user is one, every step
+  // after "Become a builder" is locked. `startBecomeBuilder` opens the
+  // one-approval onboarding modal (identity + resources, bundled).
+  const { hasIdentity, startBecomeBuilder } = useOnboarding();
+
+  // When the build gate first opens, auto-expand the gated steps the user
+  // hasn't finished yet — completed steps stay folded. Runs once per device;
+  // a later manual collapse is then respected (see useUnlockExpand).
+  const expandOnUnlock = useMemo(
+    () =>
+      (
+        [
+          ["dot-site", tasks.deploy],
+          ["tutorial", tasks.tutorial],
+          ["mod", tasks.mod],
+          ["get-modded", tasks.mod_received],
+          ["stars", tasks.star_received],
+        ] as const
+      )
+        .filter(([, complete]) => !complete)
+        .map(([id]) => id),
+    [tasks.deploy, tasks.tutorial, tasks.mod, tasks.mod_received, tasks.star_received],
+  );
+  useUnlockExpand(hasIdentity, expandOnUnlock);
+
+  // First-visit-per-device intro shown above the island. Decided once,
+  // synchronously, so the first frame is correct — returning visitors never
+  // see a flash of it.
+  const [showPreHero] = useState(() => !hasSeenPreHero());
+
+  // Mount-only: honour the `?section=<id>` cross-route deep link (e.g. the
+  // Leaderboard's "How XP & Prizes work" link navigates to a fresh
+  // `/?section=xp-prizes`). Same-page jumps (quest CTAs, TOC) scroll
+  // imperatively via scrollToSection, so they don't rely on this effect.
   useEffect(() => {
-    if (!section) return;
-    // Defer so the hero island has laid out before we measure the target.
-    const t = window.setTimeout(() => {
-      document
-        .getElementById(section)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 120);
-    return () => window.clearTimeout(t);
-  }, [section]);
+    const section = new URLSearchParams(window.location.search).get("section");
+    if (section) scrollToSection(section);
+  }, []);
 
   return (
     <section
-      className="tab tab-playground tab-playground-journey"
+      className={`tab tab-playground tab-playground-journey${
+        showPreHero ? " tab-playground--intro" : ""
+      }`}
       data-testid="tab-playground"
     >
-      <IslandPortal account={account} pointsRefresh={pointsRefresh} />
+      {showPreHero && <PreHero />}
+
+      <IslandPortal
+        account={account}
+        pointsRefresh={pointsRefresh}
+        pinOnScroll={showPreHero}
+      />
 
       <div className="playground-layout">
         <div className="tab-center playground-main">
@@ -76,85 +120,146 @@ export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabP
 
           <h2 id="earn-xp" className="journey-group-title">Earn XP</h2>
 
+          {/*
+            `hue` per section is chosen to MATCH the island portal's accent for the
+            same quest (IslandPortal.tsx QUESTS, traced by `anchor`). The QUEST_COLORS
+            key names no longer describe their content — the quests were resequenced
+            independently of the artwork — so e.g. the `stars` section uses
+            QUEST_COLORS.lights. Match the island color, not the key's literal name.
+          */}
           <JourneySection
             id="username"
-            title="Set username"
+            title="Become a builder"
             hue={QUEST_COLORS.character}
-            rewards={[{ amount: XP_VALUES.username }]}
-            lede="Claim your name in the Playground."
-            description="This is how other builders will recognise you on apps, stars, mods, and the leaderboard."
-            cta={{ label: "Go to profile", to: "/profile" }}
+            rewards={[{ amount: XP_VALUES.identity, condition: "when you become a builder" }]}
+            lede="Get set up to build on Polkadot."
+            description="One quick approval sets you up to publish, star, and mod. Nothing to buy. Your verified name shows up on your apps, stars, mods, and the leaderboard."
+            cta={{
+              // Not a builder yet → "Become a builder" (the one bundled
+              // approval). Once a builder, the CTA falls back to the repeatable
+              // "Collect more resources" top-up flow.
+              label: !hasIdentity ? "Become a builder" : "Collect more resources",
+              onClick: () => startBecomeBuilder(),
+            }}
+            complete={tasks.username}
           />
 
           <JourneySection
             id="dot-site"
-            title="Your site on .dot domain"
-            hue={QUEST_COLORS.gates}
+            title="Launch a .dot site"
+            hue={QUEST_COLORS.star}
             rewards={[
-              { amount: XP_VALUES.deploy, condition: "for your 1st deploy" },
+              {
+                amount: XP_VALUES.deploy,
+                condition: "for each of your first three deploys, once it's listed in Apps",
+              },
             ]}
-            lede="Put your first site on a .dot domain. Start from a static page, publish it, and make it part of the Playground."
+            lede="Create your first site on a .dot domain. Start from a static page, publish it to our decentralised network, and make it part of the Playground."
+            cta={{ label: "Open Site Builder", to: "/builder" }}
+            complete={tasks.deploy}
+            gated={!hasIdentity}
           >
             <InstructionTabs
-              cli={
+              desktop={
                 <>
-                  <CliInstallInstructions defaultOpen />
+                  <CliInstallInstructions />
+                  <p className="journey-section-desc">
+                    You’ve got two options:
+                  </p>
                   <ol className="journey-steps">
                     <li>
-                      Already have a live website? Decentralise it on a .dot
-                      domain.
+                      <strong>Build a new site.</strong> In the Site Builder,
+                      pick a starting point, customise the page, then hit deploy
+                      to publish it to a .dot domain. No local setup needed.
+                    </li>
+                    <li>
+                      <strong>Decentralise an existing site.</strong> Already
+                      have a static website? Put it on a .dot domain with the
+                      CLI.
                       <CodeSnippet command={`${CLI_COMMAND} decentralize`} />
                     </li>
                   </ol>
                 </>
               }
-              noCode={
+              web={
                 <ol className="journey-steps">
                   <li>
-                    Open{" "}
-                    <a
-                      className="journey-link"
-                      href={`https://${NO_CODE_APP_DOMAIN}.li`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={handleExternalClick}
-                    >
-                      {NO_CODE_APP_DOMAIN}.li
-                    </a>{" "}
-                    in your browser.
+                    Pick a starting point in the Site Builder and customize the
+                    page.
                   </li>
                   <li>
-                    Customize the page, then hit deploy to publish your site to a .dot
-                    domain. No local setup needed.
+                    Hit deploy to publish your site to a .dot domain. No local
+                    setup needed.
+                  </li>
+                </ol>
+              }
+              mobile={
+                <ol className="journey-steps">
+                  <li>
+                    Pick a starting point in the Site Builder and customize the
+                    page.
+                  </li>
+                  <li>
+                    Hit deploy to publish your site to a .dot domain, all from
+                    your phone.
                   </li>
                 </ol>
               }
             />
           </JourneySection>
 
+          {/* Mobile-only divider. On a phone the journey is reordered (CSS
+              `order`) so phone-doable quests sit above this line and the
+              computer-bound ones (greyed) fall below it. Hidden on desktop,
+              where the journey keeps its source order. */}
+          <div className="journey-computer-break" aria-hidden="true">
+            <Laptop size={15} strokeWidth={2} aria-hidden="true" />
+            To complete these quests, you’ll need your computer
+            <Laptop size={15} strokeWidth={2} aria-hidden="true" />
+          </div>
+
           <JourneySection
             id="tutorial"
-            title="Game app tutorial"
-            hue={QUEST_COLORS.underground}
+            title="Build a game with our tutorial"
+            hue={QUEST_COLORS.gates}
             rewards={[
-              { amount: XP_VALUES.deploy, condition: "for your 2nd deploy" },
+              { amount: XP_VALUES.deploy, condition: "for each of your first three deploys" },
             ]}
             lede="Build a game app one level at a time, in about thirty minutes."
+            complete={tasks.tutorial}
+            gated={!hasIdentity}
           >
             <div className="journey-about">
               <ul className="ucard-checklist">
-                <li><Square size={16} aria-hidden="true" /> Level 1: Set up</li>
-                <li><Square size={16} aria-hidden="true" /> Level 2: Design game mechanics</li>
-                <li><Square size={16} aria-hidden="true" /> Level 3: Add multiplayer</li>
-                <li><Square size={16} aria-hidden="true" /> Level 4: Deploy your game</li>
+                <li><Square size={16} aria-hidden="true" /> Level 1 – Local Challenger</li>
+                <li><Square size={16} aria-hidden="true" /> Level 2 – On-chain Record</li>
+                <li><Square size={16} aria-hidden="true" /> Level 3 – The Leaderboard</li>
+                <li><Square size={16} aria-hidden="true" /> Level 4 – Multiplayer</li>
               </ul>
               <p className="journey-section-desc">
                 Along the way you learn how decentralised storage, unstoppable logic,
                 and player-owned assets change what apps are made of.
               </p>
+              <p className="journey-section-desc">
+                Prefer your own thing? Explore, mod, and deploy any app. Any of
+                your first three deploys earns the XP.
+              </p>
+              <p className="journey-section-desc">
+                This tutorial gets you building fast. To go deeper, see the{" "}
+                <a
+                  className="journey-link"
+                  href={DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={handleExternalClick}
+                >
+                  developer docs
+                </a>
+                .
+              </p>
             </div>
             <InstructionTabs
-              cli={
+              desktop={
                 <>
                   <CliInstallInstructions />
                   <ol className="journey-steps">
@@ -177,10 +282,11 @@ export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabP
                   </ol>
                 </>
               }
-              noCode={
+              web={
                 <ol className="journey-steps">
                   <li>
-                    Open the tutorial in RevX.
+                    Open the tutorial in RevX and press the{" "}
+                    <strong>Start tutorial</strong> button.
                     <p className="journey-step-aside">
                       <a
                         className="journey-link"
@@ -189,13 +295,9 @@ export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabP
                         rel="noopener noreferrer"
                         onClick={handleExternalClick}
                       >
-                        Vibe Code in RevX →
+                        Press Start tutorial in RevX →
                       </a>
                     </p>
-                  </li>
-                  <li>
-                    Give the RevX agent this prompt:
-                    <CodeSnippet command={AGENT_PROMPT} variant="prompt" />
                   </li>
                   <li>Follow the agent's instructions.</li>
                   <li>Get your XP on deploying the results.</li>
@@ -206,36 +308,31 @@ export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabP
 
           <JourneySection
             id="mod"
-            title="Mod apps"
-            hue={QUEST_COLORS.lights}
+            title="Mod an app"
+            hue={QUEST_COLORS.underground}
             rewards={[
-              { amount: XP_VALUES.modReceived, condition: "each time someone mods your app" },
+              { amount: XP_VALUES.deploy, condition: "for each of your first three deploys" },
             ]}
-            lede="Start from something that already works. Pick an app, change the idea, style, or behaviour, then publish your own version."
+            lede="Found an app you like? Make it your own. Playground apps are designed to be modded, so you can launch your vision without starting from scratch."
             cta={{ label: "Explore apps", to: "/apps" }}
+            complete={tasks.mod}
+            gated={!hasIdentity}
           >
             <InstructionTabs
-              cli={
+              desktop={
                 <>
-                  <p className="journey-shared-note">
-                    Go to the Apps tab on the Playground site. Launch apps, try
-                    them out, and look for ideas you want to change or build
-                    from. On the app details page, you will see whether an app is
+                  <CliInstallInstructions />
+                  <p className="journey-tab-intro">
+                    Hit <strong>Explore apps</strong> below and open one you’d
+                    like to build from. Its detail page shows whether it’s
                     moddable.
                   </p>
-                  <CliInstallInstructions />
                   <ol className="journey-steps">
                     <li>
-                      Go to the app details page and check whether the app is
-                      moddable.
-                    </li>
-                    <li>
-                      Copy the mod command from the app details page. It follows
-                      this pattern:
+                      Copy the mod command from the app’s detail page:
                       <CodeSnippet command={`${CLI_COMMAND} mod [url]`} />
                     </li>
-                    <li>Run the command locally.</li>
-                    <li>Modify the app.</li>
+                    <li>Run it locally, then make your changes.</li>
                     <li>
                       Deploy your version.
                       <CodeSnippet command={`${CLI_COMMAND} deploy`} />
@@ -255,23 +352,27 @@ export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabP
                   </ol>
                 </>
               }
-              noCode={
+              web={
                 <>
-                  <p className="journey-shared-note">
-                    Go to the Apps tab on the Playground site. Launch apps, try
-                    them out, and look for ideas you want to change or build
-                    from. On the app details page, you will see whether an app is
-                    moddable.
+                  <p className="journey-tab-intro">
+                    You can mod apps directly from your browser using RevX, a
+                    fully in-browser editor with a built-in AI agent. Describe
+                    the changes you want, vibe-code your vision, and deploy your
+                    ideas to the Playground.
                   </p>
                   <ol className="journey-steps">
-                    <li>Click the Vibe Code in RevX button.</li>
-                    <li>Talk to the agent to make changes.</li>
-                    <li>Preview the app.</li>
-                    <li>Hit deploy when ready.</li>
+                    <li>
+                      Hit <strong>Explore apps</strong> below and open one you’d
+                      like to build from.
+                    </li>
+                    <li>
+                      On its detail page, click <strong>Vibe Code in RevX</strong>{" "}
+                      to open your own copy in the editor.
+                    </li>
                   </ol>
                   <p className="journey-warning">
-                    Apps deployed from RevX are not moddable yet. To make your app
-                    moddable, use the Playground CLI flow.
+                    Apps deployed from RevX aren’t moddable yet. To publish a
+                    moddable app, use the CLI flow.
                   </p>
                 </>
               }
@@ -279,29 +380,79 @@ export default function PlaygroundTab({ account, pointsRefresh }: PlaygroundTabP
           </JourneySection>
 
           <JourneySection
+            id="get-modded"
+            title="Get your app modded"
+            hue={QUEST_COLORS.pet}
+            rewards={[
+              { amount: XP_VALUES.modReceived, condition: "each time someone mods your app" },
+            ]}
+            lede="Your app can be someone else's starting point. Get it out there, make sure it's moddable, then invite people to build on it. You earn XP every time someone does."
+            cta={{ label: "My Apps →", to: "/profile" }}
+            complete={tasks.mod_received}
+            gated={!hasIdentity}
+          >
+            <ol className="journey-steps">
+              <li>
+                Check your app shows up in the{" "}
+                <Link className="journey-link" to="/apps">
+                  Apps
+                </Link>{" "}
+                list so people can find it.
+              </li>
+              <li>
+                Open its detail page and confirm it carries the{" "}
+                <strong>Moddable</strong> badge. No badge? Re-deploy with a
+                public GitHub repo linked. That’s what makes an app moddable.
+              </li>
+              <li>
+                Grab the share link from the app’s detail page and send it to
+                friends, your group chat, or socials.
+              </li>
+              <li>
+                Invite people to mod it. Every builder who starts from your app
+                earns you XP.
+              </li>
+            </ol>
+            <p className="journey-note">
+              The more useful your app is as a starting point, the more it gets
+              modded. A friendly README and a few quest ideas go a long way.
+            </p>
+          </JourneySection>
+
+          <JourneySection
             id="stars"
             title="Give and receive stars"
-            hue={QUEST_COLORS.star}
+            hue={QUEST_COLORS.lights}
             rewards={[
               { amount: XP_VALUES.starReceived, condition: "each time someone stars your app" },
             ]}
             lede="Star apps you like to save them to your favourites and help surface the projects worth celebrating."
-            description="Your stars help choose what gets noticed. Starring is one-way and free — the XP goes to the app's builder."
+            description="Your stars help choose what gets noticed. Starring is one-way and free, and the XP goes to the app's builder."
+            cta={{ label: "Explore apps", to: "/apps" }}
+            complete={tasks.star_received}
+            gated={!hasIdentity}
           />
 
           <JourneySection
             id="where-next"
-            title="Where next"
-            lede="See what others are building, find a starting point, or publish something new for others to remix."
+            title="Keep climbing"
+            lede="Every app you launch, mod, and star earns XP. See how you stack up against other builders, then keep shipping to climb."
             cta={{ label: "Go to leaderboard", to: "/leaderboard" }}
             plain
           >
-            <ul className="journey-ideas">
-              <li>See what other people have created.</li>
-              <li>Explore apps and star the ones you like.</li>
-              <li>Pick an idea and build from it.</li>
-              <li>Make your own app moddable so others can start from it.</li>
-            </ul>
+            <p className="journey-note">
+              Want more? Go deeper in the{" "}
+              <a
+                className="journey-link"
+                href={DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={handleExternalClick}
+              >
+                developer docs
+              </a>
+              , or join the community.
+            </p>
           </JourneySection>
         </div>
 

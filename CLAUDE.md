@@ -70,25 +70,26 @@ The Playwright suite (`pnpm test:e2e`) is real but expensive and currently pause
 **Smart Contract** (`contracts/registry/`): `#![no_std]` PVM contract registered as `@w3s/playground-registry`. A `@staging/playground-registry` variant exists for test deploys — swap the `cdm = "..."` annotation on `mod playground_registry` before deploy and revert after.
 
 - Core storage: `app_count`, `domain_at` (index→domain), `metadata_uri` (domain→IPFS CID), `info` (domain→`AppInfo { owner, visibility, publisher }`).
-- Points / leaderboard storage: `account_points: Mapping<Address, u128>` (single XP total per account, evicted at score 0), `points_index: OrderedIndex<u128, Address, 2>` (descending-sorted leaderboard, keyed on `u128::MAX - score`), per-domain counters (`mod_count`, `star_count`), per-pair dedupe maps (`mod_credited`, `star_given`), `blacklisted: Mapping<Address, bool>` (sudo-managed defense-in-depth against callers that lie or bypass the `is_dev_signer` flag), `launch_awarded: Mapping<String, bool>` (set true on first successful launch award, persists through `unpublish` to close the republish-farming vector).
-- `publish(domain, metadata_uri, visibility, owner: Option<Address>, modded_from: String, is_moddable: bool, is_dev_signer: bool)` — first publisher owns the domain; re-publishes preserve `info.owner` + `info.publisher` and only mutate `visibility` + `metadata_uri`. `owner = None` defaults to `env::caller()` (phone-mode); `Some(user_h160)` is the dev-mode CLI path where a development signer signs but the user's H160 is recorded as owner.
-- `star(domain)` / `unstar(domain)` — toggle a star, awards/refunds 1 XP to the owner. Self-star and double-star revert.
+- Points / leaderboard storage: `account_points: Mapping<Address, u128>` (single XP total per account, evicted at score 0), `points_index: OrderedIndex<u128, Address, 3>` (descending-sorted leaderboard, keyed on `u128::MAX - score`), per-domain counters (`mod_count`, `star_count`) plus app-scoped awarded social XP (`domain_mod_points`, `domain_star_points`), per-pair dedupe maps (`mod_credited`, `star_given`), `blacklisted: Mapping<Address, bool>` (sudo/admin-managed blocklist for non-awardable recipients), `launch_awarded: Mapping<String, bool>` (set true on first successful launch award, persists through `unpublish` to close the republish-farming vector).
+- `publish(domain, metadata_uri, visibility, owner: Option<Address>, modded_from: String, is_moddable: bool, is_dev_signer: bool)` — guarded/scored phone path. First publisher owns the domain; re-publishes preserve `info.owner` + `info.publisher` and only mutate `visibility` + `metadata_uri`. `owner = Some(...)` is rejected here; phone/mobile callers publish as themselves. `is_dev_signer` remains on the ABI for client compatibility but is ignored.
+- `publish_dev(domain, metadata_uri, visibility, owner: Option<Address>, modded_from: String, is_moddable: bool)` — ungated dev-signer path. Only the known CLI dev signer (`0x35cdb23ff7fc86e8dccd577ca309bfea9c978d20`) may call it. `owner = Some(user_h160)` is allowed so dev-signer deploys still appear under the user, but this method never awards deploy XP and never increments/awards source-app mod credit. It still records app metadata and on-chain lineage.
+- `star(domain)` — permanently stars an app and awards star XP to the owner once per voter/domain. Self-star and double-star revert.
 - Read methods: `get_app_count`, `get_apps`, `get_domain_at`, `get_metadata_uri`, `get_owner`, `get_points`, `get_top_builders(start, count)` (single sorted descending page), `get_mod_count`, `get_star_count`, `has_starred`, `get_point_breakdown` (one round-trip total + Launch/Mod/Star derivation), `is_blacklisted`, `is_pinned`, `get_pinned_apps`, `get_visibility`, `get_lineage_count`, `get_lineage(start, count)`.
-- Sudo-only: `set_blacklisted(accounts: Vec<Address>, value: bool)`, `pin`/`unpin`, `add_admin`/`remove_admin`, `set_frozen`, `refresh_reputation_reference`, and the migration imports `import_app` / `import_apps` / `import_pinned` / `import_lineage` / `import_points` / `import_social_counts` / `import_usernames`.
+- Sudo/admin: `set_blacklisted(accounts: Vec<Address>, value: bool)`, `pin`/`unpin`, `admin_set_username`, `admin_clear_username`, `admin_set_username_bonus`, `admin_set_deploy_award_count`, and `admin_set_app_social_counts`. These mutate bucket-specific state so totals and leaderboard indexes stay in sync. Sudo-only: `add_admin`/`remove_admin`, `set_frozen`, and the migration imports `import_app` / `import_apps` / `import_pinned` / `import_lineage` / `import_points` / `import_social_counts` / `import_usernames`.
 
 ### Non-obvious contract invariants
 
 - **NEVER use `Option<T>` where `T: IS_DYNAMIC` in a `#[pvm::method]` signature.** `pvm_contract::abi::Option<T>` declares `HEAD_SIZE = 32 + T::HEAD_SIZE` (64 bytes for `Option<String>`), but viem (the TS SDK encoder) writes a Solidity dynamic tuple `(bool, string)` as a single 32-byte offset slot. The dispatcher advances `__offset` 32 bytes further than viem writes, and every parameter after the offending Option reads from misaligned bytes — silent corruption, no revert, just wrong boolean values landing in the contract. `Option<Address>` is fine (both halves static, 64 bytes inline either way). Workaround: use plain `String` / `Vec<T>` with `""` / `vec![]` as the "no value" sentinel (see `modded_from` on `publish`).
-- **Launch awards fire ONCE per domain, ever.** Tracked by `launch_awarded`. `publish → +3 → unpublish → publish` rolls `app_count` forward but does NOT re-award. The marker persists through `unpublish` exactly so this farming vector stays closed; even a new owner re-claiming a previously-rewarded domain earns nothing for the launch class. The regression check is `scripts/smoke-test-points.ts` scenario 12.
-- **`is_dev_signer` is a caller-supplied claim, defended by the blacklist.** The CLI passes `true` for dev / `--suri` signer mode; the playground-app UI always passes `false`. Sudo seeds `blacklisted` with well-known dev H160s (Substrate `//Alice`, `//Bob`, the bulletin-deploy bare root) so even if a caller lies, the recipient address still trips the `try_award` guard. When `try_award` returns false, NO point event is emitted — the leaderboard never surfaces a dev key and the frontend doesn't refresh chasing a non-change.
-- **Mod-credit dedupe is keyed on `caller`, not `owner_addr`.** `owner_addr` is a soft hint passed via the `owner: Option<Address>` param — keying dedupe on it would let one PoP-bounded signer publish N mods with N throwaway H160s as `owner` and farm N mod credits for the same source. Caller is the actual on-chain signer (sybil-bounded by mobile PoP). The self-mod guard still compares `src_info.owner != owner_addr` so dev-mode publishes (a dev signer signs as the user) correctly block self-modding.
-- **Point events use SCALE-encoded typed payloads, not raw domain bytes.** Six events (`DeployPointAwarded`, `PlaygroundPublishPointAwarded`, `ModdablePointAwarded`, `ModPointAwarded`, `StarPointAwarded`, `StarPointRefunded`) carry a struct (recipient + domain, or recipient + source + modder + mod_domain). Legacy events (`Published`, `Unpublished`, `Rated`, `RatingRemoved`, `VisibilityChanged`, `Pinned`, `Unpinned`) still emit raw UTF-8 domain bytes. `src/App.tsx`'s dispatcher branches on the `TYPED_PAYLOAD_EVENTS` set and delegates decoding to `src/scaleDecode.ts::decodeFirstDomainAfterAddress` — the typed payloads start with a 20-byte `Address` and the first `String` field is what the UI needs to refresh.
+- **Launch awards fire ONCE per domain, ever.** Tracked by `launch_awarded`. `publish → +100 → unpublish → publish` rolls `app_count` forward but does NOT re-award. The marker persists through `unpublish` exactly so this farming vector stays closed; even a new owner re-claiming a previously-rewarded domain earns nothing for the launch class. Unpublish does remove the app-scoped star/mod XP recorded on that app.
+- **Dev-signer mode is a separate method, not a trusted calldata flag.** `is_dev_signer` remains on `publish` for client compatibility but is ignored. Dev-signer deploys must call `publish_dev`, which derives authorization from `env::caller()` matching the known CLI dev signer. Known dev signer recipients and sudo/admin-blacklisted recipients silently no-op out of `try_award`; when `try_award` returns false, NO point event is emitted.
+- **Mod-credit dedupe is keyed on `caller`, not `owner_addr`.** On the scored `publish` path, keying dedupe on `owner_addr` would let one PoP-bounded signer publish N mods of the same source with N throwaway H160s as `owner` and farm N mod credits for the same source. Caller is the actual on-chain signer (sybil-bounded by mobile PoP). `publish_dev` bypasses source-app mod count/XP entirely.
+- **Point events use SCALE-encoded typed payloads, not raw domain bytes.** Six events (`DeployPointAwarded`, `PlaygroundPublishPointAwarded`, `ModdablePointAwarded`, `ModPointAwarded`, `StarPointAwarded`, `StarPointRefunded`) carry a struct (recipient + domain, or recipient + source + modder + mod_domain). Legacy events (`Published`, `Unpublished`, `VisibilityChanged`, `Pinned`, `Unpinned`) still emit raw UTF-8 domain bytes. (`Rated`/`RatingRemoved` were retired with the rating feature; the frontend keeps their decoders only so historical events from a pre-redeploy contract still resolve.) `src/App.tsx`'s dispatcher branches on the `TYPED_PAYLOAD_EVENTS` set and delegates decoding to `src/scaleDecode.ts::decodeFirstDomainAfterAddress` — the typed payloads start with a 20-byte `Address` and the first `String` field is what the UI needs to refresh.
 - **`OrderedIndex::range(_, _, offset, limit)` short-circuits empty when `limit == 0`.** Don't call `get_top_builders(start, 0)` expecting "everything from start"; you'll get `[]` regardless of how many entries exist.
-- **Re-publishing preserves `info.owner` + `info.publisher`.** Only `visibility` and `metadata_uri` are mutable after first publish; ownership is immutable to block hostile rewrites. Re-publish from the original `publisher` (dev signer in dev-mode flows) succeeds via `is_authorized_to_republish`, but the same caller cannot `unpublish` or flip visibility — those gate on `is_authorized`, which is owner-or-sudo only.
+- **Re-publishing preserves `info.owner` + `info.publisher`.** Only `visibility` and `metadata_uri` are mutable after first publish; ownership is immutable to block hostile rewrites. Re-publish from the original `publisher` (dev signer in dev-mode flows) succeeds via `is_authorized_to_republish`, but the same caller cannot `unpublish` or flip visibility — those gate on `is_authorized`, which is owner-or-sudo/admin only.
 
 ### Smoke-testing the contract on `@staging`
 
-`scripts/smoke-test-points.ts` exercises every points-relevant path end-to-end against a `@staging/playground-registry` deployment. Setup model: one signer (the staging dev signer) signs every tx, but ownership is assigned via `owner: Some(...)` so each scenario credits a distinct fake H160; the dev signer is blacklisted up front so it cannot earn. To redeploy with a local source change:
+`scripts/smoke-test-points.ts` predates the `publish` / `publish_dev` split. Its old setup model used one staging dev signer plus `owner: Some(...)` to simulate many users; that no longer exercises scored publishes because `publish` rejects owner override and `publish_dev` intentionally awards nothing. If you revive it, use real per-user/mobile signers for scored flows and reserve `publish_dev` assertions for lineage/no-XP behavior. To redeploy with a local source change:
 
 1. Swap the `cdm = "..."` annotation on `mod playground_registry` to `@staging/playground-registry`.
 2. `rm -f target/playground-registry.* && pnpm build:contracts` (force-rebuild).
@@ -96,7 +97,7 @@ The Playwright suite (`pnpm test:e2e`) is real but expensive and currently pause
 4. `playground contract install @staging/playground-registry` to refresh `cdm.json` + `.cdm/*.d.ts`.
 5. Read the new `version` + `address` from `cdm.json` and update `STAGING_ADDR` in `scripts/smoke-test-points.ts`.
 6. Swap the source back to `@w3s/playground-registry`.
-7. `pnpm tsx scripts/smoke-test-points.ts` — 45/45 expected.
+7. `pnpm tsx scripts/smoke-test-points.ts` — 50/50 expected.
 
 The smoke test uses `waitFor: "finalized"` and explicit `gasLimit` / `storageDepositLimit` overrides because successive txs each read state immediately after the previous one (and a long serial sequence can outrun the auto-estimator). Production frontend reads are best-block by default — no override needed.
 
@@ -108,7 +109,7 @@ The smoke test uses `waitFor: "finalized"` and explicit `gasLimit` / `storageDep
 
 ## Sentry telemetry
 
-- DSN: hardcoded in [src/sentry.ts](src/sentry.ts); override via `VITE_SENTRY_DSN`, disable with empty string. The DSN is publish-only — public-safe to embed.
+- DSN: supplied at build time via `VITE_SENTRY_DSN` (CI reads it from the `SENTRY_DSN` GitHub Actions secret in `deploy-frontend.yml` / `release.yml`). Unset/empty disables Sentry, so local dev/builds run without it unless set in `.env.local`. The DSN is publish-only — public-safe, but kept out of the source tree.
 - Spec: [sentry-instrumentation.md](sentry-instrumentation.md).
 - Attribute prefixes: `journey.*` (page-load, authenticate, publish, rate-app), `chain.tx`/`chain.query`, `bulletin.upload`/`bulletin.fetch`, `tx.cancelled`.
 - Back up any Sentry dashboard via the org API before modifying it — Sentry's API replaces the entire widget array on PUT with no undo. See `sentry-instrumentation.md` for the script template.
@@ -774,7 +775,7 @@ This repo is one of several. The frontend in `src/` is the three-tab app; the co
 | Component | Role in the flow |
 |---|---|
 | **playground-app** (this repo) | Three tabs (Playground / Apps / Profile), App Detail Page, publish pipeline |
-| **playground CLI** (`playground`, alias `pg`) | Local IDE path: `playground init`, `playground mod`, `playground build`, `playground deploy --playground`, `playground decentralise`, `playground logout`, `playground update` |
+| **playground CLI** (`playground`, alias `pg`) | Local IDE path: `playground login`, `playground mod`, `playground build`, `playground deploy --playground`, `playground decentralise`, `playground logout`, `playground update` |
 | **RevX** | Browser IDE; opens via deep-link `revx.dev/editor?mod=<domain>` |
 | **`@parity/product-sdk-*` (Product SDK)** | All chain interactions go through these packages. Depends at runtime on Nova Spektr's `@novasamatech/host-api` + `@novasamatech/product-sdk` (TrUAPI — the low-level host transport, a separate project from the Product SDK) |
 | **Bulletin Chain** | Decentralised storage for app metadata, icons, frontend assets |
@@ -792,14 +793,14 @@ Bulletin storage is time-limited and requires renewal — time-bound deployments
 The frontend reads the registry via `@dotdm/cdm`. Key on-chain features: cumulative stars, on-chain XP balance, `mod_count` counter, top-builders index, dev-signer blacklist, claimed usernames, anti-farming sentinels, and lineage tracking via `get_lineage` / `get_lineage_count`.
 
 **Events emitted** (the frontend subscribes to all of these — see `EVENT_NAMES` in `src/App.tsx`):
-- Legacy bare-domain payloads: `Published`, `Unpublished`, `Rated`, `RatingRemoved`, `VisibilityChanged`, `Pinned`, `Unpinned`.
+- Legacy bare-domain payloads: `Published`, `Unpublished`, `VisibilityChanged`, `Pinned`, `Unpinned`. (`Rated`/`RatingRemoved` are retired — no longer emitted; the frontend retains their decoders for historical events.)
 - Typed SCALE payloads: `DeployPointAwarded`, `PlaygroundPublishPointAwarded`, `ModdablePointAwarded`, `ModPointAwarded`, `StarPointAwarded`, `StarPointRefunded`.
 
 **The frontend should be event-driven** — re-render the grid when these events arrive rather than polling.
 
 **Stars are binary, one-way, permanent.** `star_count` is cumulative per app, never an average. Self-starring is forbidden at the contract level. Each star transfers a fixed amount of XP from the system to the app owner.
 
-**Modded-from is BOTH off-chain Bulletin metadata AND an on-chain lineage edge.** The CLI/UI passes `modded_from` as a transient `publish()` parameter — the contract uses it to award the "your app is modded" XP to the source owner and update `mod_credited`. Additively, the contract records each `(child, source)` edge in `lineage_at` with per-domain dedupe. Read methods `get_lineage_count()` and `get_lineage(start, count)` page the edge list oldest-first.
+**Modded-from is BOTH off-chain Bulletin metadata AND an on-chain lineage edge.** The CLI/UI passes `modded_from` as a transient publish parameter. On the scored `publish()` path, the contract uses it to award the "your app is modded" XP to the source owner and update `mod_credited`; on the dev-signer `publish_dev()` path, it records lineage only. In both cases the contract records each `(child, source)` edge in `lineage_at` with per-domain dedupe. Read methods `get_lineage_count()` and `get_lineage(start, count)` page the edge list oldest-first.
 
 **`mod_count` counter** per app — incremented when a new app is published with `modded_from` pointing to it. Per-`(modder, source_domain)` dedupe via `mod_credited` prevents farming.
 
@@ -826,7 +827,7 @@ The frontend should not present fee-acquisition UX — the session key model mea
 
 ## PGAS and fees
 
-**PGAS (People Gas)** is a burnable sufficient asset on Asset Hub that covers all on-chain actions — DotNS registration, registry calls, contract deploys, star/unstar, visibility toggle. Claimed via a ZK ring-VRF proof of personhood — privacy-preserving, sybil-resistant, no prior token ownership required.
+**PGAS (People Gas)** is a burnable sufficient asset on Asset Hub that covers all on-chain actions — DotNS registration, registry calls, contract deploys, stars, visibility toggle. Claimed via a ZK ring-VRF proof of personhood — privacy-preserving, sybil-resistant, no prior token ownership required.
 
 **PoUD → PGAS flow:** downloading the Polkadot App automatically grants PoUD → can claim PGAS via the mobile app. `host_request_resource_allocation([SmartContractAllowance])` at session start → phone submits claim → PGAS in product account → all transactions paid automatically.
 
@@ -868,21 +869,21 @@ Two separate concepts that are easy to conflate. Points are referred to as **XP*
 
 **XP = leaderboard score (Top Builders).** Stored on-chain as a per-account running balance. XP only ever goes up.
 
-| Action | XP displayed | Raw contract | Notes |
-|---|---|---|---|
-| First-ever deploy | 100 | 10 | Awarded once per account when `deploy_count == 1`. In practice the user's first (often tutorial) deploy. |
-| Second-ever deploy | 50 | 5 | Awarded once per account when `deploy_count == 2`. |
-| Subsequent deploys | 0 | 0 | Reward shifts entirely to social signal (stars + mods received). |
-| Star received | 10 | 1 | Per star awarded to your app. |
-| Someone mods your app | 50 | 5 | Strongest single-signal award. Dedupe per `(modder, source_domain)` so the same modder can't credit the same source twice. |
+| Action | XP | Notes |
+|---|---|---|
+| Each of the first three deploys | 100 | Each of the owner's first three AWARDED public deploys earns `DEPLOY_XP = 100`; gated by `deploy_award_count < DEPLOY_REWARD_COUNT` (3). Deploys that award nothing (dev-signer, private, or an already-launched domain) don't consume a slot. |
+| Fourth+ deploy | 0 | Reward shifts entirely to social signal (stars + mods received). |
+| Star received | 10 | `STAR_RECEIVED_XP`. Per star awarded to your app. |
+| Someone mods your app | 50 | `MOD_RECEIVED_XP`. Strongest single-signal award. Dedupe per `(modder, source_domain)` so the same modder can't credit the same source twice. |
+| Username claimed | 25 | `USERNAME_BONUS_XP`. One-time, on first `set_username`. |
 
-**First-N-deploys, not a tutorial flag.** Earlier scoring rewarded "tutorial completion" with 100 XP via a per-deploy `is_tutorial: bool` flag — gameable (any caller could set it `true` and farm 100 XP per deploy). The current approach: per-account `deploy_count` counter on the registry contract. Ungameable on the contract side (a counter is a counter), and PoP gating bounds the remaining alt-account risk.
+**First-N-deploys, not a tutorial flag.** Earlier scoring rewarded "tutorial completion" with 100 XP via a per-deploy `is_tutorial: bool` flag — gameable (any caller could set it `true` and farm 100 XP per deploy). The current approach: a per-account `deploy_award_count` on the registry contract that counts deploy AWARDS actually granted (hard-capped at `DEPLOY_REWARD_COUNT = 3`), paired with a per-domain `launch_awarded` sentinel so any given domain can mint launch XP only once, ever. Ungameable on the contract side (a counter is a counter), and PoP gating bounds the remaining alt-account risk.
 
-**Contract vs displayed values:** the registry contract stores raw points at a 10× smaller scale than what the UI displays. UI applies a uniform 10× multiplier across all values — total, buckets, leaderboard score, post-deploy toast, all the same. `PointsBreakdown.tsx` and `Leaderboard.tsx` are the two surfaces that need to apply this multiplier. Uniform 10× (not per-bucket) keeps the leaderboard sort order (raw `account_points` descending) consistent with displayed totals — no client-side resort.
+**Contract vs displayed values:** there is no display multiplier. The contract stores XP at face value (`DEPLOY_XP = 100`, `MOD_RECEIVED_XP = 50`, `STAR_RECEIVED_XP = 10`, `USERNAME_BONUS_XP = 25` — all in `contracts/registry/lib.rs`), and `Leaderboard.tsx` renders the on-chain `score` / `account_points` directly. The earlier 10×-smaller raw scale was removed in the #286 absolute-value refactor. `get_point_breakdown` returns the star/mod buckets as COUNTS (not XP); `PointsBreakdown.tsx` multiplies those counts by `XP_VALUES.starReceived` / `XP_VALUES.modReceived` for display, reads the total straight from chain, and no longer uses `launch_points` (always 0 — `get_owner_app_count` gates the deploy achievement). `src/xpValues.ts` is the single source of truth for these amounts.
 
 **Stars = what users award to other apps.** Binary, one-way, permanent. GitHub-style model — one star per app, cumulative count displayed, never average. Self-starring is forbidden. Unlimited per user — no allocation cap. Each star earns the app owner 10 XP. Stars also serve as personal favourites.
 
-**Leaderboard:** `Leaderboard.tsx` reads `get_top_builders(0, 20)`, applies the 10× display multiplier, and highlights the connected user's own rank.
+**Leaderboard:** `Leaderboard.tsx` reads `get_top_builders(0, 20)`, renders the on-chain `score` directly (no multiplier), and highlights the connected user's own rank.
 
 ## Profile tab
 
@@ -926,11 +927,11 @@ The CLI's `playground mod` command downloads the source as an **HTTPS tarball** 
 - Interactive picker: `playground mod` (lists moddable apps only)
 - Direct: `playground mod <domain>`
 
-After download, `setup.sh` runs and its output is kept visible/logged. `playground mod` writes the source domain into deploy metadata; at publish time the CLI passes it as the transient `modded_from` parameter to `publish()`, which awards the source owner the "your app is modded" XP. The "Modded from: domain" lineage rendered on the App Detail Page reads from the off-chain Bulletin metadata blob; on-chain lineage edges are queryable via `get_lineage`.
+After download, `setup.sh` runs and its output is kept visible/logged. `playground mod` writes the source domain into deploy metadata; at publish time the CLI passes it as the transient `modded_from` parameter. Mobile/scored publishes call `publish()` and award the source owner the "your app is modded" XP; dev-signer publishes call `publish_dev()` and record lineage without source-app mod XP/count. The "Modded from: domain" lineage rendered on the App Detail Page reads from the off-chain Bulletin metadata blob; on-chain lineage edges are queryable via `get_lineage`.
 
 Subsequent commands: `playground build` (auto-detects Rust/Solidity/EVM contracts + frontend, picks the package manager, installs if missing), `playground deploy --playground` (full 5-step pipeline).
 
-`playground init` covers first-time setup: QR auth, session key, dependency install, funding, account mapping, Bulletin allowance.
+`playground login` covers first-time setup: QR auth, session key, dependency install, funding, account mapping, Bulletin allowance.
 
 `playground decentralise <url>` lets users point at any live static site and get back a `.dot` URL on Bulletin.
 

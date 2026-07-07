@@ -91,7 +91,7 @@ If a write test hangs and you can't tell why, check `e2e/fixtures.ts` — the `p
 
 The reference spec describes features that don't exist in the current app. We deliberately skip tests for them; track each as an issue and add a spec when it ships:
 
-- [ ] Star/unstar (the app uses 1–5 ratings via `@mock/reputation`, not a star toggle)
+- [ ] Permanent star flow
 - [ ] Admin pin/unpin
 - [ ] Leaderboard view
 - [ ] Per-app tutorial quest levels

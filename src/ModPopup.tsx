@@ -70,8 +70,8 @@ export default function ModPopup({ domain, moddable, onClose, anchorRef }: Props
       <div className="popup-body">
         <p>
           {moddable
-            ? `Mod this app — open it in RevX in the browser, or clone it locally with the ${CLI_COMMAND} CLI.`
-            : "This app is play-only — its source isn't published, so it can't be modded."}
+            ? `Mod this app. Open it in RevX in the browser, or clone it locally with the ${CLI_COMMAND} CLI.`
+            : "This app is play-only; its source isn't published, so it can't be modded."}
         </p>
         {moddable && (
           <>

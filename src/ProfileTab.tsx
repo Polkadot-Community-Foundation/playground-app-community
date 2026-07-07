@@ -23,18 +23,22 @@ type Props = {
   signer: SignerState;
   isAdmin: boolean;
   onMod: (entry: AppEntry) => void;
-  refreshTrigger: number;
+  /** Bumped on every point-award event — refreshes the XP total live. */
+  pointsRefresh: number;
+  /** Star an app. Threaded to AppCard so cards on a profile are starrable. */
+  onStar: (domain: string) => Promise<void>;
 };
 
-export default function ProfileTab({ signer, isAdmin, onMod, refreshTrigger }: Props) {
+export default function ProfileTab({ signer, isAdmin, onMod, pointsRefresh, onStar }: Props) {
   return (
     <div className="tab tab-profile">
       <SectionBoundary name="my-apps">
         <MyApps
           signer={signer}
           onMod={onMod}
-          refreshTrigger={refreshTrigger}
+          pointsRefresh={pointsRefresh}
           isAdmin={isAdmin}
+          onStar={onStar}
         />
       </SectionBoundary>
     </div>

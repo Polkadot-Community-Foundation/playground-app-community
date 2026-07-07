@@ -15,7 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { scrollToSection } from "./utils";
 
 /**
  * Table-of-contents entries, in the order they appear on the page. `level: 1`
@@ -26,22 +26,31 @@ export const TOC_ITEMS: Array<{ id: string; label: string; level?: number }> = [
   { id: "xp-prizes", label: "XP & Prizes" },
   { id: "earn-xp", label: "Earn XP" },
   { id: "username", label: "Username", level: 1 },
-  { id: "dot-site", label: "Your site on .dot domain", level: 1 },
-  { id: "tutorial", label: "Game app tutorial", level: 1 },
-  { id: "mod", label: "Mod apps", level: 1 },
+  { id: "dot-site", label: "Launch a .dot site", level: 1 },
+  { id: "tutorial", label: "Build a game with our tutorial", level: 1 },
+  { id: "mod", label: "Mod an app", level: 1 },
+  { id: "get-modded", label: "Get your app modded", level: 1 },
   { id: "stars", label: "Give and receive stars", level: 1 },
-  { id: "where-next", label: "Where next" },
+  { id: "where-next", label: "Keep climbing" },
 ];
 
 /**
- * Sticky right-rail table of contents. Clicking an item writes
- * `?section=<id>` (the Playground tab's effect handles the scroll, matching the
- * codebase's query-param deep-link convention); a scrollspy highlights whichever
- * section is currently in view.
+ * Sticky right-rail table of contents. Clicking an item scrolls the matching
+ * section into view imperatively (so repeat clicks to the same target keep
+ * working); a scrollspy highlights whichever section is currently in view.
  */
 export default function PlaygroundToc() {
-  const [, setSearchParams] = useSearchParams();
   const [activeId, setActiveId] = useState<string>(TOC_ITEMS[0].id);
+  // "Top" is active (and the section scrollspy yields) while near the page top,
+  // above the first observed section.
+  const [atTop, setAtTop] = useState(true);
+
+  useEffect(() => {
+    const onScroll = () => setAtTop(window.scrollY < 80);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     const sections = TOC_ITEMS.map((t) => document.getElementById(t.id)).filter(
@@ -61,27 +70,43 @@ export default function PlaygroundToc() {
     return () => io.disconnect();
   }, []);
 
-  const jump = (id: string) => setSearchParams({ section: id }, { replace: true });
+  const jump = (id: string) => scrollToSection(id);
 
   return (
     <nav className="playground-toc" aria-label="On this page">
       <p className="playground-toc-head">On this page</p>
       <ul className="playground-toc-list">
-        {TOC_ITEMS.map((t) => (
-          <li key={t.id}>
-            <a
-              href={`#${t.id}`}
-              className={`toc-link${t.level ? " toc-link--nested" : ""}${activeId === t.id ? " active" : ""}`}
-              aria-current={activeId === t.id ? "true" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                jump(t.id);
-              }}
-            >
-              {t.label}
-            </a>
-          </li>
-        ))}
+        <li>
+          <a
+            href="#top"
+            className={`toc-link${atTop ? " active" : ""}`}
+            aria-current={atTop ? "true" : undefined}
+            onClick={(e) => {
+              e.preventDefault();
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+          >
+            Top
+          </a>
+        </li>
+        {TOC_ITEMS.map((t) => {
+          const active = !atTop && activeId === t.id;
+          return (
+            <li key={t.id}>
+              <a
+                href={`#${t.id}`}
+                className={`toc-link${t.level ? " toc-link--nested" : ""}${active ? " active" : ""}`}
+                aria-current={active ? "true" : undefined}
+                onClick={(e) => {
+                  e.preventDefault();
+                  jump(t.id);
+                }}
+              >
+                {t.label}
+              </a>
+            </li>
+          );
+        })}
       </ul>
     </nav>
   );

@@ -42,21 +42,9 @@ export default function CodeSnippet({ command, ariaLabel, variant = "command" }:
       ) : (
         <span className="code-prompt" aria-hidden="true">$</span>
       )}
-      {isPrompt ? (
-        <p className="code-cmd" aria-label={`Prompt: ${command}`}>
-          {command}
-        </p>
-      ) : (
-        <input
-          className="code-cmd"
-          value={command}
-          readOnly
-          spellCheck={false}
-          autoComplete="off"
-          aria-label={`Command: ${command}`}
-          onFocus={(e) => e.currentTarget.select()}
-        />
-      )}
+      <p className="code-cmd" aria-label={`${isPrompt ? "Prompt" : "Command"}: ${command}`}>
+        {command}
+      </p>
       <button
         type="button"
         className="code-copy"

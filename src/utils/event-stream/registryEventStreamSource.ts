@@ -42,16 +42,8 @@ function accountEntity(account: string | undefined): EventStreamEntity[] {
   return account ? [{ type: "account", id: account, label: accountDisplayName(account) }] : [];
 }
 
-function usernameEntity(username: string | undefined): EventStreamEntity[] {
-  return username ? [{ type: "username", id: username, label: username }] : [];
-}
-
 function payloadDomain(payload: RegistryEventPayload): string | undefined {
   return "domain" in payload ? payload.domain : undefined;
-}
-
-function payloadUsername(payload: RegistryEventPayload): string | undefined {
-  return "username" in payload ? payload.username : undefined;
 }
 
 function modPayload(payload: RegistryEventPayload): {
@@ -76,7 +68,6 @@ export function registryEventToStreamInput(
   event: DecodedRegistryEvent,
 ): EventStreamInput<DecodedRegistryEvent> {
   const domain = event.primaryDomain ?? payloadDomain(event.payload);
-  const username = payloadUsername(event.payload);
   const recipient = event.primaryAccount;
   const mod = modPayload(event.payload);
 
@@ -215,8 +206,8 @@ export function registryEventToStreamInput(
         entities: [...domainEntity(domain), ...accountEntity(recipient)],
         payload: event,
       };
-    // Legacy: pre-#287 contracts refunded star XP on unstar. The new model
-    // is one-way (no refund); this case stays so historical refunds from
+    // Legacy: pre-#287 contracts refunded star XP on star removal. The current
+    // model is one-way (no refund); this case stays so historical refunds from
     // older deployments still render.
     case "StarPointRefunded":
       return {
@@ -224,40 +215,62 @@ export function registryEventToStreamInput(
         category: "points",
         tone: "negative",
         title: domain ? `Star removed from ${domain}` : "Star XP refunded (legacy)",
-        detail: domain && recipient ? `${accountDisplayName(recipient)} lost legacy star XP after an unstar on ${domain}.` : undefined,
+        detail: domain && recipient ? `${accountDisplayName(recipient)} lost legacy star XP after a star removal on ${domain}.` : undefined,
         entities: [...domainEntity(domain), ...accountEntity(recipient)],
         payload: event,
       };
-    case "UsernameBonusAwarded":
-      return {
-        kind: streamKind(event.name),
-        category: "points",
-        tone: "positive",
-        title: "Username bonus awarded",
-        detail: username && recipient
-          ? `${accountDisplayName(recipient)} earned +${XP_VALUES.username} XP for claiming the username “${username}”.`
-          : undefined,
-        entities: [...accountEntity(recipient), ...usernameEntity(username)],
-        payload: event,
-      };
-    case "UsernameSet":
+    // Verified-identity events carry only the recipient (Address) + root pubkey
+    // — no username/domain on the wire. The DotNS name resolves off-chain, so
+    // the ticker shows the account, not a handle.
+    case "IdentityLinked":
       return {
         kind: streamKind(event.name),
         category: "identity",
         tone: "positive",
-        title: "Username set",
-        detail: username ? `${username} was claimed or updated.` : undefined,
-        entities: usernameEntity(username),
+        title: "Became a builder",
+        detail: recipient
+          ? `${accountDisplayName(recipient)} became a builder.`
+          : undefined,
+        entities: accountEntity(recipient),
         payload: event,
       };
-    case "UsernameCleared":
+    case "IdentityCleared":
       return {
         kind: streamKind(event.name),
         category: "identity",
         tone: "neutral",
-        title: "Username cleared",
-        detail: username ? `${username} was released.` : undefined,
-        entities: usernameEntity(username),
+        title: "Identity cleared",
+        detail: recipient
+          ? `${accountDisplayName(recipient)} reverted to anonymous.`
+          : undefined,
+        entities: accountEntity(recipient),
+        payload: event,
+      };
+    case "IdentityBonusAwarded":
+      return {
+        kind: streamKind(event.name),
+        category: "points",
+        tone: "positive",
+        title: "Builder bonus awarded",
+        detail: recipient
+          ? `${accountDisplayName(recipient)} earned +${XP_VALUES.identity} XP for becoming a builder.`
+          : undefined,
+        entities: accountEntity(recipient),
+        payload: event,
+      };
+    // Infra/health: the contract-funded faucet ran dry and couldn't send native
+    // tokens to the recipient. Recorded for ops visibility; the user-facing "it's
+    // on us" message is surfaced from the faucet tx result, not this stream item.
+    case "FaucetFailed":
+      return {
+        kind: streamKind(event.name),
+        category: "admin",
+        tone: "negative",
+        title: "Faucet is empty",
+        detail: recipient
+          ? `The playground couldn't fund ${accountDisplayName(recipient)}.`
+          : undefined,
+        entities: accountEntity(recipient),
         payload: event,
       };
   }

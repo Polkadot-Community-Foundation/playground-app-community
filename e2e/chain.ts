@@ -38,12 +38,11 @@ import { getWsProvider } from "polkadot-api/ws";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { h160ToSs58, type HexString } from "@parity/product-sdk-address";
 
-// Asset-hub RPC. Defaults to Summit Asset Hub (the production target); override
-// with ASSET_HUB_WS_URL for Paseo or a custom endpoint. The `paseo_asset_hub`
-// descriptor is still used for typed decoding (no Summit descriptor is published
-// yet) — it decodes Summit AH as long as the runtime tracks Paseo Next v2.
-const ASSET_HUB_RPC: string =
-  process.env.ASSET_HUB_WS_URL ?? "wss://summit-asset-hub-rpc.polkadot.io";
+// Asset-hub RPC for the Paseo Next v2 deployment that the `-n paseo` CDM
+// preset and the `paseo_asset_hub` descriptor target. For runs against a
+// custom RPC, plumb it through ASSET_HUB_WS_URL rather than editing this.
+const PASEO_AH_RPC: string =
+  process.env.ASSET_HUB_WS_URL ?? "wss://paseo-asset-hub-next-rpc.polkadot.io";
 const CONNECT_TIMEOUT_MS = 30_000;
 
 export type AssetHubApi = TypedApi<typeof paseo_asset_hub>;
@@ -64,7 +63,7 @@ export async function getTestClient(): Promise<TestClient> {
   if (!clientPromise) {
     clientPromise = Promise.race([
       (async () => {
-        const polkadotClient = createClient(getWsProvider(ASSET_HUB_RPC));
+        const polkadotClient = createClient(getWsProvider(PASEO_AH_RPC));
         openClient = polkadotClient;
         const assetHub = polkadotClient.getTypedApi(paseo_asset_hub);
         return {

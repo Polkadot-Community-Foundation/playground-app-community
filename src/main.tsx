@@ -16,22 +16,42 @@
 
 import "./sentry.ts";
 import "./lib/logger-config.ts";
-import { lazy, StrictMode, Suspense } from "react";
+import { StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import * as Sentry from "@sentry/react";
+import { lazyRetry } from "./utils/lazyRetry.ts";
+import { LoadingFallback } from "./LoadingFallback.tsx";
 import "@fontsource-variable/inter";
 import "@fontsource/dm-serif-display/400.css";
 import "@fontsource/dm-mono/400.css";
 import "@fontsource/dm-mono/500.css";
+import "@fontsource/sixtyfour/400.css";
 import "./App.css";
 
 // Lazy-loaded so that App.tsx's module-level side effects (page-load journey,
 // signer subscription) don't execute when the user is on the test-sentry page
 // or when a Polkadot Desktop dashboard widget mounts the lean widget root.
-const App = lazy(() => import("./App.tsx"));
-const TestSentry = lazy(() => import("./TestSentry.tsx"));
-const MyAppsWidget = lazy(() => import("./MyAppsWidget.tsx"));
+const App = lazyRetry(() => import("./App.tsx"));
+const TestSentry = lazyRetry(() => import("./TestSentry.tsx"));
+const MyAppsWidget = lazyRetry(() => import("./MyAppsWidget.tsx"));
+
+// A lazy chunk failing to load is almost always version skew: this tab's
+// entry bundle predates the latest deployment, and the gateway only serves
+// the current manifest's hashed filenames. Reloading picks up the new
+// bundle. Rate-limited to one reload per 30s so a chunk that's missing in
+// the CURRENT deployment (or a dead gateway) can't reload-loop — repeat
+// failures fall through to Vite's normal import rejection, which surfaces
+// in the boundary fallback. The window self-resets, so a tab left open
+// across a later deployment still heals itself.
+window.addEventListener("vite:preloadError", (event) => {
+  const KEY = "playground:chunk-reload-at";
+  const lastReload = Number(sessionStorage.getItem(KEY) ?? 0);
+  if (Date.now() - lastReload < 30_000) return;
+  sessionStorage.setItem(KEY, String(Date.now()));
+  event.preventDefault();
+  window.location.reload();
+});
 
 const isTestPage = new URLSearchParams(window.location.search).has("test-sentry");
 // Interim hookup for the Polkadot Desktop *Widget* modality. The eventual
@@ -57,7 +77,7 @@ createRoot(document.getElementById("root")!).render(
       fallback={<FallbackUi />}
       beforeCapture={(scope) => scope.setTag("boundary", "root")}
     >
-      <Suspense fallback={null}>
+      <Suspense fallback={<LoadingFallback />}>
         {isTestPage ? (
           <TestSentry />
         ) : isWidget ? (

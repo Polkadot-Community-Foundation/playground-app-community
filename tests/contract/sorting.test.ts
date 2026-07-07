@@ -19,12 +19,12 @@
  *
  * Exercises the v13 OrderedIndex maintenance for `get_top_starred` /
  * `get_top_modded` against a local revive-dev-node (or `cdm test`'s PPN):
- *   - star → `star_index` insert; unstar → eviction at 0
+ *   - star → `star_index` insert
  *   - mod publish → `mod_index` insert (per-(caller, source) dedupe holds)
  *   - multi-tier ordering: 3 starrers + 2 starrers + 1 starrer rank
  *     descending in get_top_starred
  *   - same shape for get_top_modded with distinct mod-publishers
- *   - unpublish drops; re-publish runs `restore_to_social_indexes`
+ *   - unpublish drops and resets social counts; re-publish starts at zero
  *   - lazy backfill: `import_social_counts` updates counts but skips the
  *     index; the next live star promotes via `set_indexed_count`
  *   - pagination edge cases + dedupe / self-star reverts
@@ -55,6 +55,8 @@ const RUN = Date.now().toString(36);
 const D = (label: string) => `sort-${RUN}-${label}.dot`;
 
 const VISIBILITY_PUBLIC = 1;
+const STAR_RECEIVED_XP = 10;
+const MOD_RECEIVED_XP = 50;
 const NO_OWNER = {
   isSome: false,
   value: "0x0000000000000000000000000000000000000000",
@@ -147,11 +149,13 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
     expect(typeof reg.getTopModded?.query, "getTopModded should be queryable").toBe(
       "function",
     );
+    expect(typeof reg.getAppData?.query, "getAppData should be queryable").toBe(
+      "function",
+    );
     expect(typeof reg.star?.tx, "star should be a tx").toBe("function");
-    expect(typeof reg.unstar?.tx, "unstar should be a tx").toBe("function");
   });
 
-  it.skipIf(!canWrite())("star inserts into star_index; unstar evicts at 0", async () => {
+  it.skipIf(!canWrite())("star inserts into star_index and remains indexed", async () => {
     const { registry } = await getHandles();
     const reg = registry as any;
     const domain = D("star-roundtrip");
@@ -181,13 +185,19 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
       expect(pageDomains(page)).toContain(domain);
     }
 
-    await txOk("bob unstars domain", reg.unstar.tx(domain, txAs(bob)));
-    expect(Number((await reg.getStarCount.query(domain)).value)).toBe(0);
+    expect((await reg.hasStarred.query(bob.h160, domain)).value).toBe(true);
+    expect(Number((await reg.getStarCount.query(domain)).value)).toBe(1);
+    {
+      const rows = (await reg.getAppData.query([domain], bob.h160)).value;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].domain).toBe(domain);
+      expect(Number(rows[0].star_count)).toBe(1);
+      expect(Number(rows[0].mod_count)).toBe(0);
+      expect(rows[0].has_starred).toBe(true);
+    }
     {
       const page = (await reg.getTopStarred.query(0, 100)).value;
-      // Eviction-at-zero: the entry must be gone from the index, not just
-      // surface a stale (MAX, domain) key that lingers below positive counts.
-      expect(pageDomains(page)).not.toContain(domain);
+      expect(pageDomains(page)).toContain(domain);
     }
   });
 
@@ -239,6 +249,59 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
       txAs(bob),
     ));
     expect(Number((await reg.getModCount.query(source)).value)).toBe(1);
+  });
+
+  it.skipIf(!canWrite())("non-dev callers cannot spoof dev mode or owner override", async () => {
+    const { registry } = await getHandles();
+    const reg = registry as any;
+    const source = D("spoof-source");
+    const spoofedMod = D("spoofed-mod");
+    const spoofedOwner = D("spoofed-owner");
+
+    await txOk("alice publishes source", reg.publish.tx(
+      source,
+      FAKE_CID,
+      VISIBILITY_PUBLIC,
+      NO_OWNER,
+      NO_MODDED_FROM,
+      false,
+      false,
+      txAs(alice),
+    ));
+    const before = Number((await reg.getPoints.query(alice.h160)).value);
+
+    // Bob is not the known dev signer. Claiming `is_dev_signer=true` is ignored:
+    // the mod counts and awards exactly like a normal phone-mode publish.
+    await txOk("bob publishes mod with spoofed dev flag", reg.publish.tx(
+      spoofedMod,
+      FAKE_CID,
+      VISIBILITY_PUBLIC,
+      NO_OWNER,
+      source,
+      false,
+      true,
+      txAs(bob),
+    ));
+
+    expect(Number((await reg.getModCount.query(source)).value)).toBe(1);
+    expect(Number((await reg.getPoints.query(alice.h160)).value)).toBe(
+      before + MOD_RECEIVED_XP,
+    );
+    {
+      const page = (await reg.getTopModded.query(0, 100)).value;
+      expect(pageDomains(page)).toContain(source);
+    }
+
+    await expect(reg.publish.tx(
+      spoofedOwner,
+      FAKE_CID,
+      VISIBILITY_PUBLIC,
+      { isSome: true, value: charlie.h160 },
+      NO_MODDED_FROM,
+      false,
+      false,
+      txAs(bob),
+    )).rejects.toThrow();
   });
 
   it.skipIf(!canWrite())(
@@ -344,7 +407,7 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
   );
 
   it.skipIf(!canWrite())(
-    "unpublish drops from both indexes; counts persist",
+    "unpublish drops from both indexes and resets social counts",
     async () => {
       const { registry } = await getHandles();
       const reg = registry as any;
@@ -374,13 +437,16 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
       ));
       expect(Number((await reg.getStarCount.query(domain)).value)).toBe(1);
       expect(Number((await reg.getModCount.query(domain)).value)).toBe(1);
+      const beforeUnpublish = Number((await reg.getPoints.query(alice.h160)).value);
 
       await txOk("alice unpublishes domain", reg.unpublish.tx(domain, txAs(alice)));
 
-      // Counts persist (CR2: stars are permanent), but the sorted views
-      // represent currently-published apps only.
-      expect(Number((await reg.getStarCount.query(domain)).value)).toBe(1);
-      expect(Number((await reg.getModCount.query(domain)).value)).toBe(1);
+      // App-scoped social XP is removed from the owner; deploy XP remains.
+      expect(Number((await reg.getPoints.query(alice.h160)).value)).toBe(
+        beforeUnpublish - STAR_RECEIVED_XP - MOD_RECEIVED_XP,
+      );
+      expect(Number((await reg.getStarCount.query(domain)).value)).toBe(0);
+      expect(Number((await reg.getModCount.query(domain)).value)).toBe(0);
       {
         const starred = (await reg.getTopStarred.query(0, 100)).value;
         expect(pageDomains(starred)).not.toContain(domain);
@@ -391,7 +457,7 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
   );
 
   it.skipIf(!canWrite())(
-    "re-publish after unpublish restores indexes at preserved counts",
+    "re-publish after unpublish starts with reset social counts",
     async () => {
       const { registry } = await getHandles();
       const reg = registry as any;
@@ -418,9 +484,6 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
         expect(pageDomains(starred)).not.toContain(domain);
       }
 
-      // Re-publish hits the `None` arm of publish() and calls
-      // restore_to_social_indexes, which reads the preserved star_count and
-      // re-inserts (MAX - 2, domain) into star_index.
       await txOk("alice re-publishes domain", reg.publish.tx(
         domain,
         FAKE_CID,
@@ -431,9 +494,10 @@ describe("registry sorting indexes — write paths (local dev-node only)", () =>
         false,
         txAs(alice),
       ));
+      expect(Number((await reg.getStarCount.query(domain)).value)).toBe(0);
       {
         const starred = (await reg.getTopStarred.query(0, 100)).value;
-        expect(pageDomains(starred)).toContain(domain);
+        expect(pageDomains(starred)).not.toContain(domain);
       }
     },
   );

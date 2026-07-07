@@ -28,12 +28,6 @@ import { fileURLToPath } from "node:url";
 import { test as base } from "@playwright/test";
 import {
   createTestHostFixture,
-  // RESIDUAL SUMMIT BLOCKER: the mock host injects this chain into the
-  // SPA-under-test. `@parity/host-api-test-sdk` ships no Summit fixture, so the
-  // app side of e2e stays on Paseo until upstream adds `SUMMIT_ASSET_HUB`
-  // (or equivalent). The e2e helpers (chain.ts / registry.ts / gateway) are
-  // retargeted to Summit; this import is the last piece that can't move yet.
-  // See PLAYGROUND_SUMMIT_VM_RUNBOOK "e2e on Summit" blockers.
   PASEO_ASSET_HUB,
   type TestHost,
 } from "@parity/host-api-test-sdk/playwright";

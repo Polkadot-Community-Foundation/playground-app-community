@@ -34,44 +34,53 @@ test.describe("browse — recents grid", () => {
     await expect(cardFor(frame, FIXTURE_DOMAIN)).toBeVisible({ timeout: 60_000 });
   });
 
-  test("the all-pill is active on first load", async ({ testHost }) => {
+  test("no category is selected on first load", async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await waitForAnyCard(frame);
 
-    await expect(frame.locator('[data-testid="filter-pill"][data-tag="all"]'))
-      .toHaveAttribute("data-active", "true");
+    // Additive model: the default is "nothing selected" (show all), so the
+    // leading toggle reads its inert "filters" state and no tag pill is active.
+    const toggle = frame.locator('[data-testid="filters-toggle"]');
+    await expect(toggle).toHaveAttribute("data-active", "false");
+    await expect(toggle).toHaveText("filters");
     await expect(frame.locator('[data-testid="filter-pill"][data-tag="utility"]'))
       .toHaveAttribute("data-active", "false");
   });
 
-  test("clicking a tag pill activates it and deactivates the all-pill", async ({ testHost }) => {
+  test("clicking a tag pill activates it and arms remove-all-filters", async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await waitForAnyCard(frame);
 
-    const allPill = frame.locator('[data-testid="filter-pill"][data-tag="all"]');
     const utilityPill = frame.locator('[data-testid="filter-pill"][data-tag="utility"]');
+    const toggle = frame.locator('[data-testid="filters-toggle"]');
 
+    // Starts off (nothing-selected default); clicking applies this category and
+    // flips the leading toggle into its clickable "remove filters" state.
+    await expect(utilityPill).toHaveAttribute("data-active", "false");
     await utilityPill.click();
     await expect(utilityPill).toHaveAttribute("data-active", "true");
-    await expect(allPill).toHaveAttribute("data-active", "false");
+    await expect(toggle).toHaveAttribute("data-active", "true");
+    await expect(toggle).toHaveText("remove filters");
   });
 
-  test("clicking the all-pill restores it as the active filter", async ({ testHost }) => {
+  test("remove all filters clears every selection", async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await waitForAnyCard(frame);
 
-    const allPill = frame.locator('[data-testid="filter-pill"][data-tag="all"]');
     const utilityPill = frame.locator('[data-testid="filter-pill"][data-tag="utility"]');
+    const toggle = frame.locator('[data-testid="filters-toggle"]');
 
-    // Move off the default first so the click on all-pill is exercised, not a no-op.
+    // Select a category so the clear action is exercised, not a no-op.
     await utilityPill.click();
-    await expect(utilityPill).toHaveAttribute("data-active", "true");
+    await expect(toggle).toHaveAttribute("data-active", "true");
 
-    await allPill.click();
-    await expect(allPill).toHaveAttribute("data-active", "true");
+    await toggle.click();
+    await expect(utilityPill).toHaveAttribute("data-active", "false");
+    await expect(toggle).toHaveAttribute("data-active", "false");
+    await expect(toggle).toHaveText("filters");
   });
 
-  test("after applying a tag filter, every visible card has that tag", async ({ testHost }) => {
+  test("selecting a category shows only cards of that tag", async ({ testHost }) => {
     const frame = await waitForAppReady(testHost);
     await waitForAnyCard(frame);
 
@@ -80,25 +89,23 @@ test.describe("browse — recents grid", () => {
 
     const fixtureTag = fixtureMetadata.tag;
     const pillLocator = frame.locator(`[data-testid="filter-pill"][data-tag="${fixtureTag}"]`);
-    await pillLocator.click();
-    // Wait for setActiveTag → re-render → grid updated.
-    await expect(pillLocator).toHaveAttribute("data-active", "true");
 
-    // Fixture remains visible — guards against the filter accidentally
-    // returning an empty set (which would pass the no-mismatch check below
-    // vacuously).
+    // Default: nothing selected → the fixture (tagged fixtureTag) is visible.
     await expect(cardFor(frame, FIXTURE_DOMAIN)).toBeVisible();
 
-    // No card with a non-matching tag is visible. Expressing this as a
-    // count==0 assertion (instead of looping per-card) gives a clear
-    // failure message ("Expected: 0, Received: 3") and avoids the
-    // no-loops-over-test-cases rule.
-    const mismatched = frame.locator(
+    // Apply that category → the fixture stays, but every card of a different
+    // bucket leaves the grid. Expressing this as a count==0 assertion gives a
+    // clear failure message and avoids the no-loops-over-test-cases rule.
+    await pillLocator.click();
+    await expect(pillLocator).toHaveAttribute("data-active", "true");
+    await expect(cardFor(frame, FIXTURE_DOMAIN)).toBeVisible();
+
+    const otherTagged = frame.locator(
       `[data-testid="app-grid"] [data-testid="app-card"]:not([data-tag="${fixtureTag}"])`,
     );
     await expect(
-      mismatched,
-      `every visible card should match tag '${fixtureTag}' after filter`,
+      otherTagged,
+      `only '${fixtureTag}' cards should remain after selecting that category`,
     ).toHaveCount(0);
   });
 
@@ -398,5 +405,32 @@ test.describe("browse — recents grid", () => {
       nonModdable,
       "no non-moddable cards should be visible while Moddable-only is on",
     ).toHaveCount(0);
+  });
+
+  test("Show sites toggle is on by default and hides site cards when turned off", async ({ testHost }) => {
+    const frame = await waitForAppReady(testHost);
+    await waitForAnyCard(frame);
+    await waitForCardMetadata(frame, FIXTURE_DOMAIN);
+
+    const toggle = frame.locator('[data-testid="filter-site-toggle"]');
+    // Default: Show sites is on, so the grid shows everything (sites mixed in).
+    await expect(toggle).toHaveAttribute("data-active", "true");
+    // The utility fixture is a non-site card — visible regardless of the toggle.
+    await expect(cardFor(frame, FIXTURE_DOMAIN)).toBeVisible();
+
+    // Turning Show sites off removes only the site cards; the non-site fixture
+    // stays. (count==0 holds trivially if the live registry has no sites — the
+    // assertion still guards against a site card surviving the toggle.)
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("data-active", "false");
+    await expect(
+      frame.locator(`[data-testid="app-grid"] [data-testid="app-card"][data-tag="site"]`),
+      "no site cards should be visible while Show sites is off",
+    ).toHaveCount(0);
+    await expect(cardFor(frame, FIXTURE_DOMAIN)).toBeVisible();
+
+    // Back on → default grid restored.
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("data-active", "true");
   });
 });

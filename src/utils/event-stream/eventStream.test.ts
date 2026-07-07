@@ -26,6 +26,7 @@ import {
   createEventStreamReplayCursor,
   createLoopingEventStreamPool,
   createMixedEventStreamReplayItems,
+  createUniqueMixedEventStreamReplayItems,
 } from "./eventPool";
 
 describe("EventStreamStore", () => {
@@ -225,6 +226,58 @@ describe("event stream pools", () => {
       "live-a",
       "leader",
       "publish-a",
+    ]);
+  });
+
+  it("seeds initial ticker items without repeating a sparse pool", () => {
+    const row = createUniqueMixedEventStreamReplayItems(
+      [{
+        ...testItem("countdown"),
+        source: "leaderboard-countdown",
+        kind: "registry-highlight.leaderboard-countdown",
+      }],
+      { itemCount: 12 },
+    );
+
+    expect(row.map((item) => item.id)).toEqual(["countdown"]);
+  });
+
+  it("skips lane repeats while seeding unique initial ticker items", () => {
+    const cursor = createEventStreamReplayCursor();
+    const row = createUniqueMixedEventStreamReplayItems(
+      [
+        testItem("live"),
+        {
+          ...testItem("leader"),
+          source: "registry-highlights",
+          kind: "registry-highlight.current-leader",
+        },
+        {
+          ...testItem("publish-a"),
+          source: "registry-highlights",
+          kind: "registry-highlight.recent-publish",
+        },
+        {
+          ...testItem("publish-b"),
+          source: "registry-highlights",
+          kind: "registry-highlight.recent-publish",
+        },
+        {
+          ...testItem("publish-c"),
+          source: "registry-highlights",
+          kind: "registry-highlight.recent-publish",
+        },
+      ],
+      { itemCount: 5 },
+      cursor,
+    );
+
+    expect(row.map((item) => item.id)).toEqual([
+      "live",
+      "leader",
+      "publish-a",
+      "publish-b",
+      "publish-c",
     ]);
   });
 });

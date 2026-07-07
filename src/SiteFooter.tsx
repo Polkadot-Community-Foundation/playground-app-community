@@ -16,17 +16,20 @@
 
 import { Link } from "react-router-dom";
 import { BUILD_TIME, VERSION } from "./config";
+import { NAV_ITEMS } from "./navItems";
 
-const CAT_CLOUD: Array<{ cat: string; subs: string[] }> = [
-  { cat: "Games", subs: ["arcade", "puzzle", "pvp", "leaderboard", "racing"] },
-  { cat: "DeFi", subs: ["airdrop", "paymaster", "faucet", "tip jar", "vault"] },
-  { cat: "Personal", subs: ["profile", "calendar"] },
-  {
-    cat: "Social",
-    subs: ["chat", "channel", "poll", "vote", "members-only", "broadcast", "p2p"],
-  },
-  { cat: "IRL", subs: ["scavenger", "qr", "venue", "loyalty", "stamp"] },
-  { cat: "Art", subs: ["generative"] },
+// Footer category cloud. Each clickable chip is one of the canonical publish
+// TAGS (src/App.tsx) so the link filters the Apps grid correctly; `tag` is the
+// lowercase value carried in the ?cat= param + data-cat, `label` is the
+// pretty-cased display string, `subs` are non-clickable flavour descriptors.
+const CAT_CLOUD: Array<{ tag: string; label: string; subs: string[] }> = [
+  { tag: "gaming", label: "Gaming", subs: ["arcade", "puzzle", "pvp", "leaderboard"] },
+  { tag: "social", label: "Social", subs: ["vote", "poll", "members-only", "broadcast", "video"] },
+  { tag: "chat", label: "Chat", subs: ["bot", "group", "channel"] },
+  { tag: "irl", label: "IRL", subs: ["scavenger", "venue", "loyalty"] },
+  { tag: "utility", label: "Utility", subs: ["p2p", "qr", "tools"] },
+  { tag: "site", label: "Sites", subs: ["portfolio", "flyer", "link-in-bio"] },
+  { tag: "marketplace", label: "Marketplace", subs: ["auction", "swap", "predicton"] },
 ];
 
 /**
@@ -40,10 +43,10 @@ export default function SiteFooter() {
       <div className="footer-inner">
         <div className="footer-col footer-col-cats">
           <div className="cat-cloud">
-            {CAT_CLOUD.map(({ cat, subs }) => (
-              <span key={cat} className="cat-cloud-group">
-                <Link className="cat-chip" data-cat={cat} to={`/apps?cat=${cat}`}>
-                  {cat}
+            {CAT_CLOUD.map(({ tag, label, subs }) => (
+              <span key={tag} className="cat-cloud-group">
+                <Link className="cat-chip" data-cat={tag} to={`/apps?cat=${tag}`}>
+                  {label}
                 </Link>
                 {subs.map((sub) => (
                   <span key={sub} className="cat-chip sub-tag">
@@ -61,6 +64,13 @@ export default function SiteFooter() {
               ? `${VERSION} · built ${new Date(BUILD_TIME).toLocaleString()}`
               : `${VERSION} · local development build`}
           </p>
+          <nav className="footer-nav" aria-label="Footer">
+            {NAV_ITEMS.map((item) => (
+              <Link key={item.to} className="footer-link" to={item.to}>
+                {item.label}
+              </Link>
+            ))}
+          </nav>
         </div>
       </div>
     </footer>

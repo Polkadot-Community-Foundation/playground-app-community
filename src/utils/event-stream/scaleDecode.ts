@@ -94,6 +94,18 @@ export function decodeAddress20(
   return { value: bytesToHexLower(bytes.subarray(offset, offset + 20)), size: 20 };
 }
 
+export function decodeU128Le(
+  bytes: Uint8Array,
+  offset: number,
+): { value: bigint; size: 16 } {
+  requireBytes(bytes, offset, 16, "u128");
+  let value = 0n;
+  for (let i = 15; i >= 0; i--) {
+    value = (value << 8n) | BigInt(bytes[offset + i]);
+  }
+  return { value, size: 16 };
+}
+
 export function decodeScaleString(
   bytes: Uint8Array,
   offset: number,
@@ -126,12 +138,10 @@ export interface StarPointEventPayload {
   voter: `0x${string}`;
 }
 
-// `UsernameBonusEventPayload` reuses `decodePointAwardEventPayload` — the
-// wire format is the same (Address + String). The dispatcher renames `domain`
-// to `username` at the use site.
-export interface UsernameBonusEventPayload {
+export interface FaucetFailedEventPayload {
   recipient: `0x${string}`;
-  username: string;
+  /** Native-token amount (planck) the dry faucet failed to send. */
+  amount: bigint;
 }
 
 export function decodePointAwardEventPayload(bytes: Uint8Array): PointAwardEventPayload {
@@ -171,6 +181,15 @@ export function decodeStarPointEventPayload(bytes: Uint8Array): StarPointEventPa
     recipient: recipient.value,
     domain: domain.value,
     voter: voter.value,
+  };
+}
+
+export function decodeFaucetFailedEventPayload(bytes: Uint8Array): FaucetFailedEventPayload {
+  const recipient = decodeAddress20(bytes, 0);
+  const amount = decodeU128Le(bytes, recipient.size);
+  return {
+    recipient: recipient.value,
+    amount: amount.value,
   };
 }
 
