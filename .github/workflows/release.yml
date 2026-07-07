@@ -45,7 +45,7 @@ jobs:
     # context. Other jobs read it directly from $RELEASE_DOMAIN inside their
     # shell commands.
     domain:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Resolve domain
         outputs:
             domain: ${{ env.RELEASE_DOMAIN }}
@@ -53,7 +53,7 @@ jobs:
             - run: echo "release domain = $RELEASE_DOMAIN"
 
     build:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Build
         steps:
             # workflow_dispatch inputs don't support pattern constraints
@@ -122,7 +122,7 @@ jobs:
 
     publish-metadata:
         needs: deploy
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: Publish Metadata
         steps:
             - name: Checkout repository
@@ -155,7 +155,7 @@ jobs:
 
     github-release:
         needs: deploy
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         name: GitHub Release
         steps:
             - name: Create GitHub Release

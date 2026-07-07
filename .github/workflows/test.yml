@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
     test:
-        runs-on: ${{ inputs.runner || 'parity-default' }}
+        runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
         steps:
             - uses: actions/checkout@v4
             - uses: pnpm/action-setup@v4
