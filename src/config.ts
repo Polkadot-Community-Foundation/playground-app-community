@@ -35,7 +35,7 @@ export type Environment = (typeof ENVIRONMENTS)[number];
  *  preview / smoke-test, never in prod. */
 function resolveEnvironment(): Environment {
   const raw = env.VITE_ENVIRONMENT?.trim().toLowerCase();
-  if (!raw) return "summit";
+  if (!raw) return "paseo";
   if ((ENVIRONMENTS as readonly string[]).includes(raw)) return raw as Environment;
   throw new Error(
     `VITE_ENVIRONMENT="${env.VITE_ENVIRONMENT}" is not a supported network. ` +
