@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       env:
-        description: "polkadot-app-deploy environment (Summit-only in PCF CI)"
+        description: "polkadot-app-deploy environment (paseo-next-only in PCF CI)"
         required: false
         type: string
         default: summit
@@ -93,8 +93,8 @@ jobs:
 
       - name: Refuse non-Summit env
         run: |
-          if [ "${{ inputs.env }}" != "summit" ]; then
-            echo "::error::env='${{ inputs.env }}' is not 'summit'. PCF CI is Summit-only."
+          if [ "${{ inputs.env }}" != "paseo-next" ]; then
+            echo "::error::env='${{ inputs.env }}' is not 'paseo-next'. PCF CI targets the PCF paseo-next suite only."
             exit 1
           fi
 
@@ -104,7 +104,7 @@ jobs:
           node-version: "22"
 
       - name: Install polkadot-app-deploy
-        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.11.1
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.12.0
 
       - name: Deploy to Bulletin
         id: deploy
