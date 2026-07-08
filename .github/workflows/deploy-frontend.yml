@@ -77,7 +77,7 @@ jobs:
                   # a missing/unset variable can never silently build Paseo — this
                   # is a Summit-only fork. (src/config.ts also defaults to summit,
                   # making this belt-and-suspenders.)
-                  VITE_ENVIRONMENT: ${{ vars.ENVIRONMENT || 'summit' }}
+                  VITE_ENVIRONMENT: ${{ vars.ENVIRONMENT || 'paseo' }}
                   VITE_SENTRY_DSN: ""
                   VITE_VERSION: ${{ steps.version.outputs.version }}
                   VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}
@@ -140,7 +140,7 @@ jobs:
             # DotNS name (~2 SUM) + a Bulletin upload (14-day expiry); the
             # preview link is meaningful opened in-host (a plain-browser gateway
             # view boots with CHAIN="paseo" until product-sdk ships a Summit env).
-            env: summit
+            env: paseo-next
         secrets:
             # 5Fk8… is the only Bulletin-authorized uploader, so it signs both
             # preview and production deploys (E2E_FUNDER_SEED can't upload to
