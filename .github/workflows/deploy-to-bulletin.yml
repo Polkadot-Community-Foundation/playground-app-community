@@ -20,10 +20,10 @@ on:
         required: true
         type: string
       env:
-        description: "polkadot-app-deploy environment (paseo-next-only in PCF CI)"
+        description: "polkadot-app-deploy environment (devnet in PCF CI)"
         required: false
         type: string
-        default: summit
+        default: devnet
       environment:
         description: "GitHub Environment to gate the deploy on (e.g. 'production' for required reviewers)"
         required: false
@@ -87,14 +87,11 @@ jobs:
           name: ${{ inputs.artifact-name }}
           path: dist
 
-      # Hard rule: PCF CI is Summit-only. Refuse to deploy a bundle that still
-      # references the Paseo network/env (e.g. a stray `paseo-next-v2`,
-      # `paseo-asset-hub` descriptor, or `paseo` RPC baked into the build).
-
-      - name: Refuse non-Summit env
+      # Hard rule: PCF CI targets the public products devnet. Refuse any other env.
+      - name: Refuse non-devnet env
         run: |
-          if [ "${{ inputs.env }}" != "paseo-next" ]; then
-            echo "::error::env='${{ inputs.env }}' is not 'paseo-next'. PCF CI targets the PCF paseo-next suite only."
+          if [ "${{ inputs.env }}" != "devnet" ]; then
+            echo "::error::env='${{ inputs.env }}' is not 'devnet'. PCF CI targets the public products devnet only."
             exit 1
           fi
 

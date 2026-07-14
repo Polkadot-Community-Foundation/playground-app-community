@@ -140,7 +140,7 @@ jobs:
             # DotNS name (~2 SUM) + a Bulletin upload (14-day expiry); the
             # preview link is meaningful opened in-host (a plain-browser gateway
             # view boots with CHAIN="paseo" until product-sdk ships a Summit env).
-            env: paseo-next
+            env: devnet
         secrets:
             # 5Fk8… is the only Bulletin-authorized uploader, so it signs both
             # preview and production deploys (E2E_FUNDER_SEED can't upload to
