@@ -121,6 +121,7 @@ export const DEV_ACCOUNTS: `0x${string}`[] = [
 const ASSET_HUB_WS: Record<Environment, string> = {
   paseo: "wss://paseo-asset-hub-next-rpc.polkadot.io",
   summit: "wss://summit-asset-hub-rpc.polkadot.io",
+  devnet: "wss://asset-hub-paseo-rpc.n.dwellir.com",
 };
 
 /**

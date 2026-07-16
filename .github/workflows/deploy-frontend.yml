@@ -77,7 +77,7 @@ jobs:
                   # a missing/unset variable can never silently build Paseo — this
                   # is a Summit-only fork. (src/config.ts also defaults to summit,
                   # making this belt-and-suspenders.)
-                  VITE_ENVIRONMENT: ${{ vars.ENVIRONMENT || 'paseo' }}
+                  VITE_ENVIRONMENT: ${{ vars.ENVIRONMENT || 'devnet' }}
                   VITE_SENTRY_DSN: ""
                   VITE_VERSION: ${{ steps.version.outputs.version }}
                   VITE_BUILD_TIME: ${{ steps.version.outputs.build_time }}

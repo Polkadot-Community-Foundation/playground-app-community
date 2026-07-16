@@ -5,7 +5,7 @@
   "contracts": {
     "@w3s/playground-registry": {
       "version": 1,
-      "address": "0x49091Eb6dbBf2f95B55243b987ebc15eaaEe711F",
+      "address": "0xdba08504f14fb46dca59da5e75e55c49b08c1ecc",
       "abi": [
         {
           "type": "constructor",

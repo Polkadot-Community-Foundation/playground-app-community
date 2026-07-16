@@ -16,7 +16,9 @@
 
 import { useSyncExternalStore } from "react";
 import * as Sentry from "@sentry/react";
-import { getChainAPI, type ChainClient, type PresetChains } from "@parity/product-sdk-chain-client";
+import { resolveActiveChainClient, type ActiveChainClient } from "../builder/activeChainClient.ts";
+import { devnet_asset_hub } from "@parity/product-sdk-descriptors/devnet-asset-hub";
+import { devnet_individuality } from "@parity/product-sdk-descriptors/devnet-individuality";
 import {
   ContractManager,
   type CdmJson,
@@ -190,7 +192,7 @@ if (import.meta.hot) {
 // Tracks the ENVIRONMENT-selected network ("paseo" | "summit"); the client and
 // every descriptor below move together with it. getChainAPI(CHAIN) returns
 // exactly this type, so no cast is needed at the assignment.
-type ActiveChainClient = ChainClient<PresetChains<Environment>>;
+// ActiveChainClient imported from ../builder/activeChainClient.ts (BYOD-aware).
 
 // PAPI descriptors for the active network, selected from ENVIRONMENT in ONE
 // place so Asset Hub and the People chain can't be half-wired when a network is
@@ -201,7 +203,9 @@ type ActiveChainClient = ChainClient<PresetChains<Environment>>;
 const descriptors =
   ENVIRONMENT === "summit"
     ? { assetHub: summit_asset_hub, individuality: summit_individuality }
-    : { assetHub: paseo_asset_hub, individuality: paseo_individuality };
+    : ENVIRONMENT === "devnet"
+      ? { assetHub: devnet_asset_hub, individuality: devnet_individuality }
+      : { assetHub: paseo_asset_hub, individuality: paseo_individuality };
 
 export interface ContractsReady {
   client: ActiveChainClient;
@@ -222,7 +226,7 @@ export const contractsReady: Promise<ContractsReady> = (async () => {
     // the grid's load path surfaces as an actionable "reload" error. Mirrors
     // builder/chain.ts's getAssetHubClient.
     const client = await withDeadline(
-      getChainAPI(CHAIN),
+      resolveActiveChainClient(),
       READ_DEADLINE_MS,
       "Chain connection",
     );
