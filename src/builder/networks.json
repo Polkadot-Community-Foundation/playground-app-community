@@ -1,42 +1,61 @@
 {
-    "$comment": "Top-level network config — the networks this app can target. Values are a subset of bulletin-deploy/assets/environments.json (the source of truth); re-sync from there when backends change. Keys match the app-wide ENVIRONMENT (VITE_ENVIRONMENT): builder/config.ts selects the active network as networks[ENVIRONMENT]. This is a Summit-only fork — the upstream `paseo` network entry is intentionally dropped so no Paseo genesis/endpoints can leak into a build. `preview` has no ENVIRONMENT value and is reference data only.",
-    "networks": {
-        "summit": {
-            "name": "Summit",
-            "description": "Web3 Summit Network",
-            "bulletinRpc": "wss://summit-bulletin-rpc.polkadot.io",
-            "assetHubRpc": "wss://summit-asset-hub-rpc.polkadot.io",
-            "assetHubGenesis": "0xf388dc6d6cdf6fb77eac3c4a91f31bc0c8642b142f1a757512ab7849f9f70660",
-            "ipfsGateway": "https://summit-ipfs.polkadot.io",
-            "dotHost": "dot.li",
-            "nativeToEthRatio": 100000000,
-            "bulletinFaucetUrl": "https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet",
-            "pasFaucetUrl": "https://faucet.polkadot.io/",
-            "contracts": {
-                "registry": "0xFb7AB7E142ED0248D77198CA8722D67C1930D783",
-                "registrar": "0xf3969bCBE60463302306663C62A6A8ef91ab9aA5",
-                "registrarController": "0xA68a5b2A6be6d014be0dB07c0ed4bacc4A6A570A",
-                "contentResolver": "0xf110e5799c3f0adb8ED885C02c45Ecfe7fD86226",
-                "popRules": "0x6331e51C9AfC73BfE12562fd160BA2c66A73f984"
-            }
-        },
-        "preview": {
-            "name": "Preview",
-            "description": "Product Preview net, used by Product Teams",
-            "bulletinRpc": "wss://previewnet.substrate.dev/bulletin",
-            "assetHubRpc": "wss://previewnet.substrate.dev/asset-hub",
-            "ipfsGateway": "https://previewnet.substrate.dev",
-            "dotHost": "dot.li",
-            "nativeToEthRatio": 100000000,
-            "bulletinFaucetUrl": "https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet",
-            "pasFaucetUrl": "https://faucet.polkadot.io/",
-            "contracts": {
-                "registry": "0x5622CA75C75726Da13ae46C69127C07c87538633",
-                "registrar": "0x061273AeF34e8ab9Ca08E199d7440E2639Fc2088",
-                "registrarController": "0xC0c21ca6302884572E61d69D5bf3E271Acf39B23",
-                "contentResolver": "0xBD003d5Dd04E68aC60d529a46AEfBdEf8941868C",
-                "popRules": "0xF209a15e8a10D208bb4d3e3c56D9EB73a5934C26"
-            }
-        }
+  "$comment": "Top-level network config \u2014 the networks this app can target. Values are a subset of bulletin-deploy/assets/environments.json (the source of truth); re-sync from there when backends change. Keys match the app-wide ENVIRONMENT (VITE_ENVIRONMENT): builder/config.ts selects the active network as networks[ENVIRONMENT]. This is a Summit-only fork \u2014 the upstream `paseo` network entry is intentionally dropped so no Paseo genesis/endpoints can leak into a build. `preview` has no ENVIRONMENT value and is reference data only.",
+  "networks": {
+    "summit": {
+      "name": "Summit",
+      "description": "Web3 Summit Network",
+      "bulletinRpc": "wss://summit-bulletin-rpc.polkadot.io",
+      "assetHubRpc": "wss://summit-asset-hub-rpc.polkadot.io",
+      "assetHubGenesis": "0xf388dc6d6cdf6fb77eac3c4a91f31bc0c8642b142f1a757512ab7849f9f70660",
+      "ipfsGateway": "https://summit-ipfs.polkadot.io",
+      "dotHost": "dot.li",
+      "nativeToEthRatio": 100000000,
+      "bulletinFaucetUrl": "https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet",
+      "pasFaucetUrl": "https://faucet.polkadot.io/",
+      "contracts": {
+        "registry": "0xFb7AB7E142ED0248D77198CA8722D67C1930D783",
+        "registrar": "0xf3969bCBE60463302306663C62A6A8ef91ab9aA5",
+        "registrarController": "0xA68a5b2A6be6d014be0dB07c0ed4bacc4A6A570A",
+        "contentResolver": "0xf110e5799c3f0adb8ED885C02c45Ecfe7fD86226",
+        "popRules": "0x6331e51C9AfC73BfE12562fd160BA2c66A73f984"
+      }
+    },
+    "preview": {
+      "name": "Preview",
+      "description": "Product Preview net, used by Product Teams",
+      "bulletinRpc": "wss://previewnet.substrate.dev/bulletin",
+      "assetHubRpc": "wss://previewnet.substrate.dev/asset-hub",
+      "ipfsGateway": "https://previewnet.substrate.dev",
+      "dotHost": "dot.li",
+      "nativeToEthRatio": 100000000,
+      "bulletinFaucetUrl": "https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet",
+      "pasFaucetUrl": "https://faucet.polkadot.io/",
+      "contracts": {
+        "registry": "0x5622CA75C75726Da13ae46C69127C07c87538633",
+        "registrar": "0x061273AeF34e8ab9Ca08E199d7440E2639Fc2088",
+        "registrarController": "0xC0c21ca6302884572E61d69D5bf3E271Acf39B23",
+        "contentResolver": "0xBD003d5Dd04E68aC60d529a46AEfBdEf8941868C",
+        "popRules": "0xF209a15e8a10D208bb4d3e3c56D9EB73a5934C26"
+      }
+    },
+    "devnet": {
+      "name": "Devnet",
+      "description": "Public Products Testnet (Paseo)",
+      "bulletinRpc": "wss://bulletin-paseo.tservices.es:8443",
+      "assetHubRpc": "wss://asset-hub-paseo-rpc.n.dwellir.com",
+      "assetHubGenesis": "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
+      "ipfsGateway": "https://devnet-ipfs.api.polkadotcommunity.foundation",
+      "dotHost": "dev-dot.li",
+      "nativeToEthRatio": 100000000,
+      "bulletinFaucetUrl": "https://paritytech.github.io/polkadot-bulletin-chain/authorizations?tab=faucet",
+      "pasFaucetUrl": "https://faucet.polkadot.io/",
+      "contracts": {
+        "registry": "0x527b08a640b527a3dae0C4BE04D7344E430B6E50",
+        "registrar": "0x7f0dF075cc8B7FE7218E90fFC5a553450dB120F3",
+        "registrarController": "0x45fDEa4Ad7b8607Fc22DBC3DBE3cD8b350F8bede",
+        "contentResolver": "0x326bdE29315199c814B1c58b431D84D16EA5cE41",
+        "popRules": "0x2181a14081fF2D4477BAA8FB1aEB4C9c44F5F2b0"
+      }
     }
+  }
 }
