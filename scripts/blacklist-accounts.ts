@@ -79,7 +79,7 @@ const chain = resolveChain();
 // host-only (Polkadot Browser/Desktop) and has no WS fallback for Node.
 const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
-const manager = await ContractManager.fromLiveClient(
+const managerResult = await ContractManager.fromLiveClient(
   cdmJson as unknown as CdmJson,
   client,
   assetHubDescriptor(chain),
@@ -90,6 +90,9 @@ const manager = await ContractManager.fromLiveClient(
     libraries: [REGISTRY_CONTRACT],
   },
 );
+// fromLiveClient returns a Result since product-sdk-contracts 0.9: unwrap or fail loudly.
+if (!managerResult.ok) throw managerResult.error;
+const manager = managerResult.value;
 
 try {
   const registry = manager.getContract(REGISTRY_CONTRACT);
