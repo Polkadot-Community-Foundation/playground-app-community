@@ -17,13 +17,19 @@ pnpm dev
 ```bash
 pnpm build:frontend      # TypeScript compile + Vite build → dist/
 pnpm build:contracts     # Build PVM contracts via CDM
-pnpm deploy              # Deploy contracts to Paseo
+pnpm deploy              # Deploy contracts to Paseo (CDM -n paseo)
+pnpm deploy:devnet       # Deploy contracts to the PCF products devnet (CDM -n devnet)
 pnpm deploy:frontend     # Deploy dist/ to a Bulletin-hosted .dot domain
                          # (the bundled command targets `playgroundtest.dot` —
                          # edit it in package.json to point at your own .dot)
 ```
 
 Rust contracts require nightly toolchain (configured in `rust-toolchain.toml`).
+
+`VITE_ENVIRONMENT` selects the target network at BUILD time (unset = `paseo`;
+set `VITE_ENVIRONMENT=devnet` for a devnet build). Deploy the registry contract
+to the target network first: a devnet build resolves the registry from the
+devnet CDM registry and there is no fallback. See [DEPLOY.MD](DEPLOY.MD).
 
 For the full deployment walk-through — prerequisites, account mapping, env vars, and verification steps — see [DEPLOY.MD](DEPLOY.MD).
 

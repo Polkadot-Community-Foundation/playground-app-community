@@ -32,6 +32,7 @@ import {
   type ProgressEvent,
 } from "@parity/product-sdk-cloud-storage";
 import { getPreimageManager } from "@parity/product-sdk-host";
+import { unwrapOk } from "@parity/result";
 import { ensurePreimagePermission } from "../utils/hostPermissions.ts";
 import type { PolkadotSigner } from "polkadot-api";
 import { CHAIN } from "../config.ts";
@@ -70,14 +71,12 @@ function getBuilderBulletinClient(): Promise<CloudStorageClient> {
   // (via withDeadline) timed-out create would otherwise be reused forever,
   // breaking every later store/auth-check until an app restart. Null the slot
   // on failure so the next caller rebuilds. See chain.ts for the same pattern.
+  const signer = createLazySigner(
+    () => currentSigner,
+    "Builder store called with no active account signer",
+  );
   return (clientPromise ??= withDeadline(
-    CloudStorageClient.create({
-      environment: CHAIN,
-      signer: createLazySigner(
-        () => currentSigner,
-        "Builder store called with no active account signer",
-      ),
-    }),
+    CloudStorageClient.create({ environment: CHAIN, signer }),
     READ_DEADLINE_MS,
     "Bulletin client connection",
   ).catch((cause) => {
@@ -121,7 +120,10 @@ export function resetBuilderBulletinClient(): void {
 
 export async function checkBulletinAuthorization(address: string): Promise<AuthCheck> {
   const client = await getBuilderBulletinClient();
-  const status = await client.checkAuthorization(address);
+  // checkAuthorization returns a Result (cloud-storage 0.9); a genuine failure
+  // (e.g. host unavailable) rethrows here exactly as the pre-Result API threw.
+  // "Not authorized" is a successful read with `authorized: false`, not an err.
+  const status = unwrapOk(await client.checkAuthorization(address));
   return {
     authorized: status.authorized,
     remainingTransactions: status.remainingTransactions,

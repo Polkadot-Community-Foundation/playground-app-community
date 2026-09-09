@@ -34,6 +34,7 @@ import {
   ContractManager,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
+import { unwrapOk } from "@parity/result";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { calculateCid } from "@parity/product-sdk-cloud-storage";
 import { AsyncBulletinClient } from "@parity/bulletin-sdk";
@@ -156,16 +157,18 @@ console.log("Upload complete");
 // host-only (Polkadot Browser/Desktop) and has no WS fallback for Node.
 const chainClient = createClient(getWsProvider(assetHubWsUrl()));
 
-const manager = await ContractManager.fromLiveClient(
-  cdmJson as unknown as CdmJson,
-  chainClient,
-  paseo_asset_hub,
-  {
-    defaultSigner: signer,
-    defaultOrigin: origin,
-    registryOrigin: origin,
-    libraries: [PLAYGROUND_REGISTRY_CONTRACT],
-  },
+const manager = unwrapOk(
+  await ContractManager.fromLiveClient(
+    cdmJson as unknown as CdmJson,
+    chainClient,
+    paseo_asset_hub,
+    {
+      defaultSigner: signer,
+      defaultOrigin: origin,
+      registryOrigin: origin,
+      libraries: [PLAYGROUND_REGISTRY_CONTRACT],
+    },
+  ),
 );
 
 try {
@@ -187,7 +190,7 @@ try {
     false,
   );
   if (!result.ok) throw new Error("Registry publish transaction failed");
-  console.log(`Tx: ${result.txHash}`);
+  console.log(`Tx: ${result.value.txHash}`);
   console.log(`Published ${domain}!`);
 } finally {
   chainClient.destroy();

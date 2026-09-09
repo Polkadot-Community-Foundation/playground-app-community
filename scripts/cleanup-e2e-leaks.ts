@@ -42,6 +42,7 @@ import {
   ContractManager,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
+import { unwrapOk } from "@parity/result";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { assetHubWsUrl } from "./_lib.ts";
@@ -90,12 +91,14 @@ async function fetchMetadata<T>(cid: string): Promise<T> {
 // WebSocket fallback; node scripts wire the PolkadotClient directly.
 const chainClient = createClient(getWsProvider(assetHubWsUrl()));
 
-const manager = await ContractManager.fromLiveClient(cdmJson, chainClient, paseo_asset_hub, {
-  defaultSigner: signer,
-  defaultOrigin: origin,
-  registryOrigin: origin,
-  libraries: [PLAYGROUND_REGISTRY_CONTRACT],
-});
+const manager = unwrapOk(
+  await ContractManager.fromLiveClient(cdmJson, chainClient, paseo_asset_hub, {
+    defaultSigner: signer,
+    defaultOrigin: origin,
+    registryOrigin: origin,
+    libraries: [PLAYGROUND_REGISTRY_CONTRACT],
+  }),
+);
 const registry = manager.getContract(PLAYGROUND_REGISTRY_CONTRACT);
 
 const PAGE = 50;

@@ -21,11 +21,10 @@
 // live runtime can't brick the read path (the property that has saved this
 // code before). Only `api.tx.Revive.*` is typed.
 
-import { getChainAPI } from "@parity/product-sdk-chain-client";
-import { CHAIN } from "../config.ts";
+import { resolveActiveChainClient, type ActiveChainClient } from "./activeChainClient.ts";
 import { withDeadline, READ_DEADLINE_MS } from "../utils/deadline.ts";
 
-type ChainClient = Awaited<ReturnType<typeof getChainAPI>>;
+type ChainClient = ActiveChainClient;
 
 export interface AssetHubHandle {
   api: ChainClient["assetHub"];
@@ -44,7 +43,7 @@ let cached: Promise<AssetHubHandle> | null = null;
 // Mirrors the `pendingSignerReady` reset pattern in utils/contracts.ts.
 export function getAssetHubClient(): Promise<AssetHubHandle> {
   return (cached ??= withDeadline(
-    getChainAPI(CHAIN),
+    resolveActiveChainClient(),
     READ_DEADLINE_MS,
     "Asset Hub connection",
   )

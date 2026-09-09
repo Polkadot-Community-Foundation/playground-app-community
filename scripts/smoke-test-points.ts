@@ -49,6 +49,7 @@ import {
   createContractRuntimeFromClient,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
+import { unwrapOk } from "@parity/result";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { deriveH160 } from "@parity/product-sdk-address";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
@@ -125,7 +126,14 @@ function check<T>(label: string, actual: T, expected: T): void {
 
 async function expectRevert(label: string, fn: () => Promise<unknown>): Promise<void> {
   try {
-    await fn();
+    const res = await fn();
+    // contracts 0.10 error API: a revert RESOLVES to err(...) instead of
+    // throwing - treat a returned { ok: false } Result as the expected revert.
+    if ((res as { ok?: unknown } | null | undefined)?.ok === false) {
+      passes++;
+      console.log(`  ✓ ${label} (reverted as expected)`);
+      return;
+    }
     fails++;
     console.log(`  ✗ ${label} — expected revert but call succeeded`);
   } catch (e) {
@@ -178,16 +186,18 @@ async function main(): Promise<void> {
     // a fresh `cdm deploy` is picked up automatically with no manual address
     // bump. Strict-fail: if the registry call rejects, this throws (same
     // trade-off as the UI: stale snapshot + new ABI is worse).
-    const manager = await ContractManager.fromLiveClient(
-      cdmJson,
-      client,
-      paseo_asset_hub,
-      {
-        defaultSigner: signer,
-        defaultOrigin: origin,
-        registryOrigin: origin,
-        libraries: [PACKAGE],
-      },
+    const manager = unwrapOk(
+      await ContractManager.fromLiveClient(
+        cdmJson,
+        client,
+        paseo_asset_hub,
+        {
+          defaultSigner: signer,
+          defaultOrigin: origin,
+          registryOrigin: origin,
+          libraries: [PACKAGE],
+        },
+      ),
     );
     reg = manager.getContract(PACKAGE);
     address = manager.getAddress(PACKAGE);
@@ -344,9 +354,8 @@ async function main(): Promise<void> {
   console.log("\n[scenario 9] DEV stars an app owned by DEV → SelfStarForbidden");
   // Publish an app owned by DEV (no owner override).
   await reg.publish.tx(D("self-app"), FAKE_CID, VISIBILITY_PUBLIC, NO_OWNER, NO_MODDED_FROM, false, true, TX_OPTS);
-  await expectRevert("star() reverts when caller == owner", async () => {
-    await reg.star.tx(D("self-app"), TX_OPTS);
-  });
+  await expectRevert("star() reverts when caller == owner", () =>
+    reg.star.tx(D("self-app"), TX_OPTS));
 
   // --- Scenario 10: Permanent star + double-star dedupe ----------------------
   console.log(`\n[scenario 10] DEV stars USER_B's beta permanently → USER_B +${STAR_RECEIVED_XP}`);
@@ -360,9 +369,8 @@ async function main(): Promise<void> {
   );
   check("has_starred(DEV, beta) == true", (await reg.hasStarred.query(devH160, D("beta"))).value, true);
 
-  await expectRevert("double-star reverts", async () => {
-    await reg.star.tx(D("beta"), TX_OPTS);
-  });
+  await expectRevert("double-star reverts", () =>
+    reg.star.tx(D("beta"), TX_OPTS));
   check(
     `USER_B stays at +${STAR_RECEIVED_XP} after rejected double-star`,
     Number((await reg.getPoints.query(USER_B)).value),
@@ -382,9 +390,8 @@ async function main(): Promise<void> {
 
   // --- Scenario 12: Empty metadata_uri reverts -----------------------------
   console.log("\n[scenario 12] empty metadata_uri rejected at publish");
-  await expectRevert("publish with empty metadata_uri reverts", async () => {
-    await reg.publish.tx(D("empty"), "", VISIBILITY_PUBLIC, NO_OWNER, NO_MODDED_FROM, false, false, TX_OPTS);
-  });
+  await expectRevert("publish with empty metadata_uri reverts", () =>
+    reg.publish.tx(D("empty"), "", VISIBILITY_PUBLIC, NO_OWNER, NO_MODDED_FROM, false, false, TX_OPTS));
 
   // --- Scenario 13: Unpublish-republish does NOT re-award launch points ----
   // Regression guard for the farming vector: publish → +DEPLOY_XP →

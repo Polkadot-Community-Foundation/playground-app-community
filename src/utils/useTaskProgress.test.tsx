@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ok } from "@parity/result";
 import { render, cleanup, screen, act } from "@testing-library/react";
 import { useRef } from "react";
 
@@ -145,7 +146,7 @@ describe("useTaskProgress — auto detection", () => {
       success: true,
       value: { isSome: true, value: `uri-site-${acct}` },
     });
-    fetchJson.mockResolvedValue({ name: "My site", tag: "site" });
+    fetchJson.mockResolvedValue(ok({ name: "My site", tag: "site" }));
     const api = { current: null as TaskProgress | null };
     render(<Probe account={acct} connected={acct} api={api} />);
     await flush();
@@ -224,7 +225,7 @@ describe("useTaskProgress — metadata proxy scan (deploy + tutorial + mod)", ()
       success: true,
       value: { isSome: true, value: `uri-tutorial-${acct}` },
     });
-    fetchJson.mockResolvedValue({ name: "My game", moddedFrom: TUTORIAL_DOMAIN });
+    fetchJson.mockResolvedValue(ok({ name: "My game", moddedFrom: TUTORIAL_DOMAIN }));
     const api = { current: null as TaskProgress | null };
     render(<Probe account={acct} connected={acct} api={api} />);
     await flush();
@@ -252,7 +253,7 @@ describe("useTaskProgress — metadata proxy scan (deploy + tutorial + mod)", ()
       success: true,
       value: { isSome: true, value: `uri-site-${acct}` },
     });
-    fetchJson.mockResolvedValue({ name: "My site", tag: "site" });
+    fetchJson.mockResolvedValue(ok({ name: "My site", tag: "site" }));
     const api = { current: null as TaskProgress | null };
     render(<Probe account={acct} connected={acct} api={api} />);
     await flush();
@@ -295,7 +296,7 @@ describe("useTaskProgress — metadata proxy scan (deploy + tutorial + mod)", ()
       success: true,
       value: { isSome: true, value: `uri-othermod-${acct}` },
     });
-    fetchJson.mockResolvedValue({ name: "My fork", moddedFrom: "someones-app.dot" });
+    fetchJson.mockResolvedValue(ok({ name: "My fork", moddedFrom: "someones-app.dot" }));
     const api = { current: null as TaskProgress | null };
     render(<Probe account={acct} connected={acct} api={api} />);
     await flush();

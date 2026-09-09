@@ -29,6 +29,13 @@ declare global {
      * generally (where `__container__` is absent).
      */
     webkit?: { messageHandlers?: Record<string, unknown> };
+    /**
+     * Set by Polkadot Desktop (Electron webview) to mark a host-embedded
+     * webview. Previously surfaced via a product-sdk global augmentation that
+     * later bumps dropped, so it's declared here alongside the other host
+     * bridge markers.
+     */
+    __HOST_WEBVIEW_MARK__?: boolean;
   }
 }
 

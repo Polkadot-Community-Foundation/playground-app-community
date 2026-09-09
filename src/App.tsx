@@ -146,7 +146,10 @@ function fetchMetadata(cid: string): Promise<AppMetadata | null> {
       // on a wedged host bridge, which would pin this CID's in-flight entry —
       // and the tile/panel awaiting it — forever. A timeout falls through to
       // the same null the host-unavailable path returns.
-      return await withReadDeadline(client.fetchJson<AppMetadata>(cid), "Bulletin metadata fetch");
+      // fetchJson returns a Result (cloud-storage 0.9 error API); a failed read
+      // falls through to the same null the host-unavailable path returns.
+      const res = await withReadDeadline(client.fetchJson<AppMetadata>(cid), "Bulletin metadata fetch");
+      return res.ok ? res.value : null;
     } catch {
       // Outside the Polkadot host, fetchJson throws CloudStorageHostUnavailableError.
       // See "Container-only delivery" in CLAUDE.md.
@@ -815,7 +818,7 @@ export default function App() {
           return guardedWrite(() =>
             runTx(
               "setVisibility",
-              (opts) => registry.setVisibility.tx(d, v, { ...opts, origin }) as Promise<{ ok: boolean }>,
+              (opts) => registry.setVisibility.tx(d, v, { ...opts, origin }),
               { domain: d, visibility: v },
             ),
           );
@@ -904,7 +907,7 @@ export default function App() {
             isModdable,
             false,
             opts,
-          ) as Promise<{ ok: boolean }>,
+          ),
         { domain, action: "edit-cover" },
       ),
     );
@@ -1715,7 +1718,7 @@ function PublishModal({ onClose, onPublished }: {
                   // dev-signer deploys use `publish_dev` instead.
                   false,
                   opts,
-                ) as Promise<{ ok: boolean }>,
+                ),
               { domain: d, modded_from: moddedFrom ?? "", is_moddable: isModdable },
             ),
           ),

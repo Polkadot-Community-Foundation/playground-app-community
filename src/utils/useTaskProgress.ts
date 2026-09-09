@@ -204,9 +204,10 @@ async function fetchMetadataOnce(
   if (hit) return { ok: true, meta: hit };
   try {
     const client = await getBulletinClient();
-    const meta = await withReadDeadline(client.fetchJson<AppMetadata>(uri), "Bulletin metadata fetch");
-    metadataCache.set(uri, meta);
-    return { ok: true, meta };
+    const res = await withReadDeadline(client.fetchJson<AppMetadata>(uri), "Bulletin metadata fetch");
+    if (!res.ok) return { ok: false };
+    metadataCache.set(uri, res.value);
+    return { ok: true, meta: res.value };
   } catch {
     return { ok: false };
   }

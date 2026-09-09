@@ -73,6 +73,8 @@ MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/blacklist-accounts.ts <ADDRESS> <ADDRES
 
 The call is sudo/admin-gated and idempotent — re-running is a cheap no-op. If you populated this registry via the migration in step 2 (`import-registry-state.ts`), the same set was already seeded as that script's step 0, so you can skip this.
 
+> **Targeting a non-default chain.** All the `pnpm tsx scripts/*.ts` helpers in this doc (blacklist, migration, `add-admin`, `pin-apps`, `verify-contracts`) default to `paseo`. For a `devnet` deploy, prefix them with `CHAIN=devnet`, e.g. `CHAIN=devnet MNEMONIC="$DEPLOY_SURI" pnpm tsx scripts/blacklist-accounts.ts`. Only chains with a full product-sdk descriptor set (`paseo`, `devnet`) are selectable; the CDM-only `w3s`/`local` presets are not. Point at a one-off endpoint with `ASSET_HUB_WS_URL=<wss://...>`.
+
 ### Anti-spam
 
 In order to stop users from spamming with randomly generated accounts, you have to make a PR to Parity's individuality repository. To configure anti-spam for a new environment simply update [this list in `runtimes/next-asset-hub-paseo/src/auth_required_filter.rs`](https://github.com/paritytech/individuality/blob/cd22364dbca446ac421dd02b5fb37d113a3806a0/runtimes/next-asset-hub-paseo/src/auth_required_filter.rs#L27)
@@ -94,7 +96,7 @@ Frontend deploys use [polkadot-app-deploy](https://github.com/paritytech/polkado
 
 ```bash
 npm install -g @parity/polkadot-app-deploy
-polkadot-app-deploy --list-environments    # pick the environment matching your chain (e.g. paseo-next-v2, summit)
+polkadot-app-deploy --list-environments    # pick the environment matching your chain (e.g. paseo-next-v2 for paseo, PCF-devnet for devnet)
 ```
 
 ```bash
@@ -110,7 +112,7 @@ All optional — a default `pnpm build:frontend` against the standard environmen
 
 | Var | Default | Purpose |
 |---|---|---|
-| `VITE_ENVIRONMENT` | `paseo` | Network the whole build targets — Asset Hub, Bulletin, and the People chain move together ([src/config.ts](src/config.ts)). Supported: `paseo`, `summit`. Must match the chain you deployed the registry to (step 2) and the `polkadot-app-deploy --env` (step 4). An explicitly-set unknown value fails the build loudly rather than silently shipping the wrong chain. See note below. |
+| `VITE_ENVIRONMENT` | `paseo` | Network the whole build targets (Asset Hub, Bulletin, and the People chain move together, [src/config.ts](src/config.ts)). Read at BUILD time only. Supported: `paseo`, `devnet`. Must match the chain you deployed the registry to (step 2) and the `polkadot-app-deploy --env` (step 4). An explicitly-set unknown value fails the build loudly rather than silently shipping the wrong chain. See note below. |
 | `VITE_VERSION` | `dev` | Release id — Sentry release tag + about screen. CI sets the short SHA / tag. Unset in a local prod build deliberately skips Sentry init (see below). |
 | `VITE_BUILD_TIME` | empty | UTC ISO build timestamp; display only. CI sets it. |
 | `VITE_SENTRY_DSN` | hardcoded DE/EU DSN in [src/sentry.ts](src/sentry.ts) | Route telemetry to a different project, or set empty to disable — see Telemetry below. |
@@ -127,21 +129,29 @@ All optional — a default `pnpm build:frontend` against the standard environmen
 
 ### Selecting the network (`VITE_ENVIRONMENT`)
 
-`VITE_ENVIRONMENT` picks which chain descriptors (Asset Hub + Bulletin + People/individuality) the frontend bundles. The default `paseo` is the standard environment; set `summit` for a summit build:
+`VITE_ENVIRONMENT` picks which chain descriptors (Asset Hub + Bulletin + People/individuality) the frontend targets. It is read at **build** time only (Vite inlines it). The default `paseo` is the Paseo Next v2 preview net; set `devnet` for a build against the Polkadot Community Foundation products devnet (the public "products devnet" on the Paseo **testnet** system chains, Asset Hub para 1000):
 
 ```bash
-VITE_ENVIRONMENT=summit pnpm build:frontend
+VITE_ENVIRONMENT=devnet pnpm build:frontend
 ```
 
 Three naming spaces line up here — keep them consistent:
 
 | Step | Selector | Example values |
 |---|---|---|
-| Contract deploy (step 2) | CDM `-n <chain>` | `paseo`, `w3s`, `summit` |
-| Frontend build | `VITE_ENVIRONMENT` | `paseo`, `summit` |
-| Frontend deploy (step 4) | `polkadot-app-deploy --env` | `paseo-next-v2`, `summit` |
+| Contract deploy (step 2) | CDM `-n <chain>` | `paseo`, `devnet` |
+| Frontend build | `VITE_ENVIRONMENT` | `paseo`, `devnet` |
+| Frontend deploy (step 4) | `polkadot-app-deploy --env` | `paseo-next-v2`, `PCF-devnet` |
 
-The registry contract address is **not** pinned in the bundle — it's resolved at boot from the on-chain CDM meta-registry whose address lives in `cdm.json` ([the `registry` field](cdm.json)). That field is set by the `cdm i -n <chain> @w3s/playground-registry` in step 2, so `VITE_ENVIRONMENT` must name the **same chain** you ran `cdm i` against, or the frontend will look for the registry on the wrong network and the Apps grid will come up empty.
+The registry contract address is **not** pinned in the bundle; it's resolved at boot from the on-chain CDM meta-registry. The frontend passes the selected network's CDM registry explicitly (paseo `0xf62c2ece...`, devnet `0x59b0...`, from [`src/builder/networks.json`](src/builder/networks.json) `cdmRegistry`), so `VITE_ENVIRONMENT` must name the **same chain** you ran `cdm i` against, or the frontend will look for the registry on the wrong network and the Apps grid will come up empty.
+
+#### Deploying to devnet
+
+The whole flow uses `-n devnet` in place of `-n paseo`: `cdm deploy -n devnet` (or `pnpm run deploy:devnet`), plus `cdm account map -n devnet`, `cdm account bal -n devnet`, and `cdm i -n devnet @w3s/playground-registry`. Endpoints and the CDM registry come from the preset. Notes:
+
+- The `-n devnet` preset needs **CDM v0.9.0+** (`cdm --version`); older CLIs report `unknown preset`.
+- The PAS faucet for devnet is the **para-1000** one: <https://faucet.polkadot.io/?parachain=1000> (paseo-next uses para 1500).
+- **Deploy the contract to the devnet CDM registry BEFORE shipping a `VITE_ENVIRONMENT=devnet` build.** The frontend resolves the registry address live from the devnet CDM registry at startup and does not fall back to another network's `cdm.json` snapshot, so a devnet build pointed at a network where `@w3s/playground-registry` isn't registered fails at contract init with a resolution error.
 
 ### Dev funder (`VITE_DEV_FUNDER_MNEMONIC`)
 

@@ -104,10 +104,11 @@ async function fetchOwnerEntries(
       if (!e.metadataUri) return;
       try {
         const client = await getBulletinClient();
-        e.metadata = await withReadDeadline(
+        const res = await withReadDeadline(
           client.fetchJson<AppMetadata>(e.metadataUri),
           "Bulletin metadata fetch",
         );
+        if (res.ok) e.metadata = res.value;
       } catch {
         /* leave undefined — WidgetRow falls back to a per-app colour block */
       }

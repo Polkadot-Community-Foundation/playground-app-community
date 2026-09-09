@@ -29,7 +29,7 @@ import {
 import { secretFromSeed, getPublicKey, HDKD } from "@scure/sr25519";
 import { str, u64 } from "scale-ts";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
-import { summit_asset_hub } from "@parity/product-sdk-descriptors/summit-asset-hub";
+import { devnet_asset_hub } from "@parity/product-sdk-descriptors/devnet-asset-hub";
 import { ENVIRONMENTS, type Environment } from "../src/config.ts";
 
 const JUNCTION_ID_LEN = 32;
@@ -120,20 +120,20 @@ export const DEV_ACCOUNTS: `0x${string}`[] = [
 // while networks.json's rpc fields are documented as vestigial for the app.
 const ASSET_HUB_WS: Record<Environment, string> = {
   paseo: "wss://paseo-asset-hub-next-rpc.polkadot.io",
-  summit: "wss://summit-asset-hub-rpc.polkadot.io",
+  devnet: "wss://asset-hub-paseo-rpc.n.dwellir.com",
 };
 
 /**
  * Resolve the target chain for a script run from the `CHAIN` env var, defaulting
- * to `"summit"` — this is a Summit-only fork, so the default never targets Paseo.
- * An explicitly-set unknown value throws rather than silently targeting the
- * wrong network. Reuses the frontend's `ENVIRONMENTS` so the selectable-network
- * set has a single source of truth (only chains with a full product-sdk
- * descriptor set qualify — CDM-only `w3s`/`local` do not).
+ * to `"paseo"` — unchanged from when these scripts were paseo-only, so existing
+ * invocations keep working. An explicitly-set unknown value throws rather than
+ * silently targeting the wrong network. Reuses the frontend's `ENVIRONMENTS` so
+ * the selectable-network set has a single source of truth (only chains with a
+ * full product-sdk descriptor set qualify — CDM-only `w3s`/`local` do not).
  */
 export function resolveChain(): Environment {
   const raw = process.env.CHAIN?.trim().toLowerCase();
-  if (!raw) return "summit";
+  if (!raw) return "paseo";
   if ((ENVIRONMENTS as readonly string[]).includes(raw)) return raw as Environment;
   throw new Error(
     `CHAIN="${raw}" is not a supported network. Use one of: ${ENVIRONMENTS.join(", ")}.`,
@@ -141,9 +141,11 @@ export function resolveChain(): Environment {
 }
 
 /** PAPI Asset-Hub descriptor for the given chain, matching the frontend's
- *  ENVIRONMENT-keyed selection in `src/utils/contracts.ts`. */
+ *  ENVIRONMENT-keyed selection in `src/utils/contracts.ts`. These scripts run
+ *  under tsx in Node (never bundled), so both descriptors are imported
+ *  statically - no build-time fold is needed or possible here. */
 export function assetHubDescriptor(chain: Environment) {
-  return chain === "summit" ? summit_asset_hub : paseo_asset_hub;
+  return chain === "devnet" ? devnet_asset_hub : paseo_asset_hub;
 }
 
 /**

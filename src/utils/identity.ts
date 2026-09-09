@@ -43,6 +43,7 @@ import {
 import { faucetFailedFromEvents } from "./event-stream/txEvents.ts";
 import { withDeadline, withReadDeadline, SUBMIT_DEADLINE_MS } from "./deadline.ts";
 import type { PlaygroundRegistryContract } from "./contracts.ts";
+import type { Result } from "@parity/result";
 import { runTx } from "./diagnostics.ts";
 import { isSigningRejection } from "../lib/telemetry";
 import { stringify } from "./stringify.ts";
@@ -80,7 +81,9 @@ type TxOpts = Parameters<Parameters<typeof runTx>[1]>[0];
 
 interface RegistryWithIdentity {
   setIdentity: {
-    tx: (rootPubkey: `0x${string}`, signature: number[], opts: TxOpts) => Promise<TxResult>;
+    // contracts 0.10 error API: `.tx()` resolves a `Result<TxResult, ...>`;
+    // runTx unwraps it (rethrowing the err channel) and hands back TxResult.
+    tx: (rootPubkey: `0x${string}`, signature: number[], opts: TxOpts) => Promise<Result<TxResult, unknown>>;
   };
   getRootAccount: {
     query: (address: `0x${string}`) => Promise<QueryResult<`0x${string}`>>;
@@ -215,7 +218,7 @@ export async function revealIdentity(callerH160: `0x${string}`): Promise<Identit
     // Pass the People-chain DESCRIPTOR (PR #212 manages its own connection) and
     // OMIT username so the SDK falls back to the host's primary DotNS name.
     const { accountId, signature } = await signIdentityMessage({
-      peopleChain: peopleChainDescriptor,
+      peopleChain: await peopleChainDescriptor,
       message,
     });
 

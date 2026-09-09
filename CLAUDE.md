@@ -15,6 +15,7 @@ pnpm typecheck              # tsc -b — fast type-check, no bundle
 pnpm build:frontend         # tsc -b + vite build → dist/
 pnpm build:contracts        # cdm build → target/*.release.polkavm + ABI
 pnpm deploy                 # cdm deploy -n paseo (build + deploy + register contracts)
+pnpm deploy:devnet          # cdm deploy -n devnet (same, against the PCF products devnet)
 pnpm deploy:frontend        # Deploy dist/ to a .dot domain via Bulletin IPFS
 pnpm preview                # Preview built frontend locally
 pnpm lint:license           # Verify GPL-3.0-or-later SPDX header on all source files
@@ -24,6 +25,12 @@ pnpm test:e2e               # Playwright E2E suite (needs E2E_FUNDER_SEED)
 ```
 
 Rust contracts require the nightly toolchain configured in `rust-toolchain.toml`.
+
+## Networks: paseo (default) and devnet
+
+`VITE_ENVIRONMENT` selects the target network at BUILD time (Vite inlines it; unset = `paseo`). Two networks are wired in `ENVIRONMENTS` ([src/config.ts](src/config.ts)): `paseo` (Paseo Next v2 preview net; CDM `-n paseo`) and `devnet` (the Polkadot Community Foundation products devnet on the Paseo testnet system chains, Asset Hub para 1000; CDM `-n devnet`, needs **CDM v0.9.0+**). Deploy the registry contract to the target network's CDM registry BEFORE shipping a build for it (`pnpm deploy` / `pnpm deploy:devnet`): the frontend resolves the registry address live from the selected network's CDM meta-registry (paseo `0xf62c...`, devnet `0x59b0...`, passed to `ContractManager.fromLiveClient` from `src/builder/networks.json` `cdmRegistry`) and there is no cdm.json fallback for the other network, so a mismatched build comes up with an empty Apps grid / contract-init error. The devnet PAS faucet is the para-1000 one: <https://faucet.polkadot.io/?parachain=1000>.
+
+The Asset Hub descriptor is selected by a build-time literal fold on `import.meta.env.VITE_ENVIRONMENT` in [src/utils/contracts.ts](src/utils/contracts.ts) (so only the selected network's ~880 kB metadata chunk is reachable from that module). Caveat: `getChainAPI(CHAIN)` (used there and in `src/builder/chain.ts`) independently pulls every preset's descriptor via runtime-keyed dynamic imports that cannot be folded, so all networks' metadata chunks are still emitted into `dist/` regardless; see the fold comment in `contracts.ts`.
 
 ## Verification before committing
 
