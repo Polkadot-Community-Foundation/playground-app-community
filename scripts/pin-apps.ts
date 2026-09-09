@@ -19,7 +19,7 @@
  *
  * Usage: tsx scripts/pin-apps.ts <domain> [<domain> ...]
  * Env:   MNEMONIC — sr25519 mnemonic for a sudo or admin account
- *        CHAIN    — target network (paseo | summit); default paseo
+ *        CHAIN    — target network (paseo | devnet); default paseo
  *
  * Pinning makes an app render at the top of the Apps grid in the
  * playground-app frontend. The canonical pin set is the structured
@@ -36,6 +36,7 @@ import {
   ContractManager,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
+import { unwrapOk } from "@parity/result";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { ss58ToH160 } from "@parity/product-sdk-address";
 import cdmJson from "../cdm.json" with { type: "json" };
@@ -73,16 +74,18 @@ const chain = resolveChain();
 
 const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
-const manager = await ContractManager.fromLiveClient(
-  cdmJson as unknown as CdmJson,
-  client,
-  assetHubDescriptor(chain),
-  {
-    defaultSigner: signer,
-    defaultOrigin: origin,
-    registryOrigin: origin,
-    libraries: [REGISTRY_CONTRACT],
-  },
+const manager = unwrapOk(
+  await ContractManager.fromLiveClient(
+    cdmJson as unknown as CdmJson,
+    client,
+    assetHubDescriptor(chain),
+    {
+      defaultSigner: signer,
+      defaultOrigin: origin,
+      registryOrigin: origin,
+      libraries: [REGISTRY_CONTRACT],
+    },
+  ),
 );
 
 try {
@@ -110,7 +113,7 @@ try {
       console.log(`FAILED`);
       throw new Error(`pin(${domain}) transaction failed`);
     }
-    console.log(`ok (${result.txHash})`);
+    console.log(`ok (${result.value.txHash})`);
     pinned++;
   }
 

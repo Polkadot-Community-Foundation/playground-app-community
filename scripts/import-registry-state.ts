@@ -36,6 +36,7 @@ import {
   ContractManager,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
+import { unwrapOk } from "@parity/result";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { readFileSync } from "node:fs";
 import cdmJson from "../cdm.json" with { type: "json" };
@@ -171,16 +172,18 @@ console.log();
 
 const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
-const manager = await ContractManager.fromLiveClient(
-  cdmJson as unknown as CdmJson,
-  client,
-  assetHubDescriptor(chain),
-  {
-    defaultSigner: signer,
-    defaultOrigin: origin,
-    registryOrigin: origin,
-    libraries: [packageName],
-  },
+const manager = unwrapOk(
+  await ContractManager.fromLiveClient(
+    cdmJson as unknown as CdmJson,
+    client,
+    assetHubDescriptor(chain),
+    {
+      defaultSigner: signer,
+      defaultOrigin: origin,
+      registryOrigin: origin,
+      libraries: [packageName],
+    },
+  ),
 );
 
 try {
@@ -228,13 +231,19 @@ try {
   const INTER_TX_DELAY_MS = 300;
 
   type TxOutcome = { ok: boolean; txHash?: string };
-  async function submitIdempotent(label: string, fn: () => Promise<TxOutcome>): Promise<TxOutcome> {
+  // `.tx()` resolves a `Result<TxResult, ...>` (contracts 0.10 error API):
+  // normalize to the flat TxOutcome the callers log - ok carries the inner
+  // txHash, err becomes an ok=false retry with the error message.
+  async function submitIdempotent(
+    label: string,
+    fn: () => Promise<{ ok: boolean; value?: { txHash?: string }; error?: unknown }>,
+  ): Promise<TxOutcome> {
     const maxAttempts = 5;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const res = await fn();
-        if (res.ok) return res;
-        console.warn(`  ⟲ ${label} attempt ${attempt} returned ok=false (hash=${res.txHash})`);
+        if (res.ok) return { ok: true, txHash: res.value?.txHash };
+        console.warn(`  ⟲ ${label} attempt ${attempt} returned err (${(res.error as Error)?.message ?? res.error})`);
       } catch (e) {
         console.warn(`  ⟲ ${label} attempt ${attempt} failed: ${(e as Error).message ?? e}`);
       }

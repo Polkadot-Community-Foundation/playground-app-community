@@ -20,7 +20,7 @@
 // listing without deploy XP.
 
 import { contractsReady, registryReady } from "../utils/contracts.ts";
-import { runTx } from "../utils/diagnostics.ts";
+import { runTx, unwrapTx } from "../utils/diagnostics.ts";
 import { deployXpAwardedFromEvents } from "./deployAward.ts";
 import { PLAYGROUND_URL } from "../config.ts";
 import { storeBytes } from "./store.ts";
@@ -122,6 +122,10 @@ export async function publishSiteToRegistry(params: {
     // recovery. A thrown DeadlineError instead reverts the button to a
     // retryable state (the site is already live; listing re-runs cleanly).
     const registry = await withDeadline(registryReady, READ_DEADLINE_MS, "Registry connection");
+    // Both branches resolve to the inner `TxResult`: `runTx` unwraps the
+    // contracts-0.10 `Result` itself (rethrowing the err channel so signing
+    // rejections / reverts classify at the caller), and the direct dev-signer
+    // `.tx()` call is unwrapped with the same `unwrapTx` helper.
     const result = await withDeadline(
         account.source === "dev"
             ? registry.publishDev.tx(
@@ -132,8 +136,8 @@ export async function publishSiteToRegistry(params: {
                   "",
                   false,
                   { signer: account.signer, origin: account.address },
-              ) as Promise<{ ok: boolean; events: unknown[] }>
-            : runTx<{ ok: boolean; events: unknown[] }>(
+              ).then(unwrapTx)
+            : runTx(
                   "publish",
                   // owner = None → contract records env::caller() (the connected user)
                   // as owner. modded_from = "" (not a mod), is_moddable = false (no
@@ -150,7 +154,7 @@ export async function publishSiteToRegistry(params: {
                           false,
                           false,
                           opts,
-                      ) as Promise<{ ok: boolean; events: unknown[] }>,
+                      ),
                   { domain: fullDomain, source: "builder" },
               ),
         SIGN_DEADLINE_MS,

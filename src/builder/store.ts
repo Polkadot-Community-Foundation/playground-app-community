@@ -32,6 +32,7 @@ import {
   type ProgressEvent,
 } from "@parity/product-sdk-cloud-storage";
 import { getPreimageManager } from "@parity/product-sdk-host";
+import { unwrapOk } from "@parity/result";
 import { ensurePreimagePermission } from "../utils/hostPermissions.ts";
 import type { PolkadotSigner } from "polkadot-api";
 import { CHAIN } from "../config.ts";
@@ -119,7 +120,10 @@ export function resetBuilderBulletinClient(): void {
 
 export async function checkBulletinAuthorization(address: string): Promise<AuthCheck> {
   const client = await getBuilderBulletinClient();
-  const status = await client.checkAuthorization(address);
+  // checkAuthorization returns a Result (cloud-storage 0.9); a genuine failure
+  // (e.g. host unavailable) rethrows here exactly as the pre-Result API threw.
+  // "Not authorized" is a successful read with `authorized: false`, not an err.
+  const status = unwrapOk(await client.checkAuthorization(address));
   return {
     authorized: status.authorized,
     remainingTransactions: status.remainingTransactions,

@@ -32,7 +32,16 @@ import { SIGN_DEADLINE_MS, withDeadline } from "./deadline.ts";
 function requestPermissionBounded(
   permission: Parameters<typeof requestPermission>[0],
 ): Promise<boolean> {
-  return withDeadline(requestPermission(permission), SIGN_DEADLINE_MS, "Requesting host permission");
+  // requestPermission now returns a Result<boolean, HostError> union instead of
+  // throwing / returning a bare boolean - unwrap to the granted flag so callers
+  // keep their `if (await ...)` boolean contract. A host-level failure (!ok) is
+  // best-effort -> false (the sign/submit that follows is the authority); a
+  // DeadlineError from withDeadline still throws and is caught by callers.
+  return withDeadline(
+    requestPermission(permission),
+    SIGN_DEADLINE_MS,
+    "Requesting host permission",
+  ).then((r) => r.ok && r.value);
 }
 
 // ChainSubmit — the host "broadcast signed transactions" permission, which gates

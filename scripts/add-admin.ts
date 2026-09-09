@@ -19,7 +19,7 @@
  *
  * Usage: tsx scripts/add-admin.ts <SS58_ADDRESS>
  * Env:   MNEMONIC — sr25519 mnemonic for the sudo account
- *        CHAIN    — target network (paseo | summit); default paseo
+ *        CHAIN    — target network (paseo | devnet); default paseo
  *
  * Example (resolving the sudo mnemonic from the local cdm config):
  *   MNEMONIC="$(node -e "process.stdout.write(require(require('os').homedir()+'/.cdm/accounts.json').paseo.mnemonic)")" \
@@ -32,6 +32,7 @@ import {
   ContractManager,
   type CdmJson,
 } from "@parity/product-sdk-contracts";
+import { unwrapOk } from "@parity/result";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { ss58ToH160 } from "@parity/product-sdk-address";
 import cdmJson from "../cdm.json" with { type: "json" };
@@ -72,20 +73,19 @@ const chain = resolveChain();
 // host-only (Polkadot Browser/Desktop) and has no WS fallback for Node.
 const client = createClient(getWsProvider(assetHubWsUrl(chain)));
 
-const managerResult = await ContractManager.fromLiveClient(
-  cdmJson as unknown as CdmJson,
-  client,
-  assetHubDescriptor(chain),
-  {
-    defaultSigner: signer,
-    defaultOrigin: origin,
-    registryOrigin: origin,
-    libraries: [REGISTRY_CONTRACT],
-  },
+const manager = unwrapOk(
+  await ContractManager.fromLiveClient(
+    cdmJson as unknown as CdmJson,
+    client,
+    assetHubDescriptor(chain),
+    {
+      defaultSigner: signer,
+      defaultOrigin: origin,
+      registryOrigin: origin,
+      libraries: [REGISTRY_CONTRACT],
+    },
+  ),
 );
-// fromLiveClient returns a Result since product-sdk-contracts 0.9: unwrap or fail loudly.
-if (!managerResult.ok) throw managerResult.error;
-const manager = managerResult.value;
 
 try {
   const registry = manager.getContract(REGISTRY_CONTRACT);
@@ -104,7 +104,7 @@ try {
   console.log(`Adding admin...`);
   const result = await registry.addAdmin.tx(h160);
   if (!result.ok) throw new Error("addAdmin transaction failed");
-  console.log(`Tx: ${result.txHash}`);
+  console.log(`Tx: ${result.value.txHash}`);
 
   const afterRes = await registry.isAdmin.query(h160);
   console.log(`isAdmin (after): ${afterRes.success ? afterRes.value : "query failed"}`);

@@ -134,10 +134,13 @@ function fetchIconUrl(cid: string): Promise<string | null> {
       // can still hang on a wedged host bridge, which would pin this icon's
       // in-flight entry (and its AppCard spinner) forever. A timeout lands in
       // the catch below → the tile degrades to its placeholder.
-      const bytes = await withReadDeadline(client.fetchBytes(cid), "Bulletin icon fetch");
+      // fetchBytes returns a Result (cloud-storage 0.9); a failed read degrades
+      // to the placeholder, same as the host-unavailable catch below.
+      const res = await withReadDeadline(client.fetchBytes(cid), "Bulletin icon fetch");
+      if (!res.ok) return null;
       // Blob's typed BlobPart rejects Uint8Array<ArrayBufferLike> on lib.dom 2024+,
       // even though every concrete Uint8Array works at runtime.
-      const url = URL.createObjectURL(new Blob([bytes as BlobPart]));
+      const url = URL.createObjectURL(new Blob([res.value as BlobPart]));
       _iconBlobCache.set(cid, url);
       return url;
     } catch {

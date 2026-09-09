@@ -15,19 +15,18 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 // Builder-local network config: DotNS contract addresses, gateway, and
-// faucets for the active network. The rpc/genesis fields in
+// faucets for the active test network. The rpc/genesis fields in
 // networks.json are vestigial here — chain connections are owned by
 // playground's SDK stack (product-sdk-chain-client / cloud-storage), which
-// resolves endpoints from its own environment presets. This is a Summit-only
-// fork: the "summit" SDK environment IS the chain these contract addresses
-// live on (Summit Asset Hub genesis 0xf388dc6d…0660, Summit Bulletin genesis
-// 0x147aae0d…ae77).
+// resolves endpoints from its own environment presets. Verified: the
+// "paseo" SDK environment IS the chain these contract addresses live on
+// (AH-Next genesis 0xbf0488db…, Bulletin-Next 0x8cfe6717…).
 //
 // Network selection follows the app-wide ENVIRONMENT (VITE_ENVIRONMENT) so the
 // builder's gateway + DotNS contracts move in lockstep with the rest of the
-// app rather than from a separate `active` field — a summit gateway paired with
-// paseo contracts would be silently broken. networks.json is keyed by
-// ENVIRONMENT, so the lookup is direct.
+// app rather than from a separate `active` field - a mismatched gateway paired
+// with paseo contracts would be silently broken. networks.json is keyed by
+// ENVIRONMENT (currently "paseo" only), so the lookup is direct.
 
 import { ENVIRONMENT } from "../config.ts";
 import networksConfig from "./networks.json";

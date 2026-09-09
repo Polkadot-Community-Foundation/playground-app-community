@@ -76,11 +76,12 @@ function displayName(account: `0x${string}`, usernames: ReadonlyMap<string, stri
 async function readAppName(row: AppRow): Promise<string> {
   try {
     const client = await getBulletinClient();
-    const metadata = await withReadDeadline(
+    const res = await withReadDeadline(
       client.fetchJson<AppMetadata>(row.metadata_uri),
       "Bulletin metadata fetch",
     );
-    return metadata.name?.trim() || row.domain;
+    if (!res.ok) return row.domain;
+    return res.value.name?.trim() || row.domain;
   } catch {
     return row.domain;
   }

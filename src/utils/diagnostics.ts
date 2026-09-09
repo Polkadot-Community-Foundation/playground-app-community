@@ -16,9 +16,22 @@
 
 import * as Sentry from "@sentry/react";
 import type { PolkadotSigner } from "polkadot-api";
+import type { Result } from "@parity/result";
 import { SpanOp, isSigningRejection } from "../lib/telemetry";
 import { ensureSignerReady, signerManager } from "./contracts.ts";
 import { stringify } from "./stringify.ts";
+
+/**
+ * Unwrap a `Result`-shaped tx outcome (contracts 0.10 error API), rethrowing
+ * the ORIGINAL error from the err channel so `isSigningRejection` /
+ * `isContractRevert` / payment-error classification at the call site keeps
+ * working. For `.tx()` calls that go through {@link runTx} this is built in;
+ * use this for direct `.tx()` calls (e.g. the dev-signer publish path).
+ */
+export function unwrapTx<T>(result: Result<T, unknown>): T {
+  if (!result.ok) throw result.error;
+  return result.value;
+}
 
 /**
  * Run a contract `.tx()` call with diagnostic logging on failure. Substrate's
@@ -60,7 +73,7 @@ type TxPassThrough = {
 
 export async function runTx<T>(
   label: string,
-  txFn: (opts: { signer: PolkadotSigner } & TxPassThrough) => Promise<T>,
+  txFn: (opts: { signer: PolkadotSigner } & TxPassThrough) => Promise<Result<T, unknown>>,
   attributes?: Record<string, string | number | boolean>,
   txOpts?: TxPassThrough,
 ): Promise<T> {
@@ -83,11 +96,22 @@ export async function runTx<T>(
         // (Unauthorized / etc.). Callers may override via txOpts.
         const origin = txOpts?.origin ?? signerManager.getState().selectedAccount?.address;
         const result = await txFn({ signer, ...txOpts, origin });
-        if ((result as { ok?: unknown })?.ok === false) {
+        // contracts 0.10 error API: `.tx()` resolves a `Result` instead of
+        // throwing. Rethrow the err channel's ORIGINAL error here so every
+        // call site keeps its pre-0.18 contract - catch blocks classify
+        // signing rejections / reverts / payment errors, guardedWrite's
+        // reactive branch fires, and fire-and-forget writes don't silently
+        // swallow failures. Callers receive the unwrapped inner `TxResult`.
+        if (!result.ok) throw result.error;
+        const value = result.value;
+        // Belt-and-braces: submitAndWatch surfaces dispatch failures on the
+        // err channel (inner ok is true whenever the outer Result is ok), but
+        // keep the diagnostic in case that invariant ever changes upstream.
+        if ((value as { ok?: unknown })?.ok === false) {
           span.setStatus({ code: 2, message: "tx-not-ok" });
-          console.error(`[tx ${label}] result.ok=false\n${stringify(result)}`);
+          console.error(`[tx ${label}] result.ok=false\n${stringify(value)}`);
         }
-        return result;
+        return value;
       } catch (err) {
         // `tx.cancelled` separates user cancellations from real failures
         // in the spans dataset — the throw still escapes, but Sentry's

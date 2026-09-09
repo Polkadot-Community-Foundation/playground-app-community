@@ -19,22 +19,22 @@
 // need CHAIN / ENVIRONMENT don't crash on module load.
 const env = (import.meta as { env?: Record<string, string | undefined> }).env ?? {};
 
-/** Networks this build can target. All three are first-class Product SDK
- *  environments — `getChainAPI` and `CloudStorageClient` both accept them
- *  natively (the SDK `Environment` union is "polkadot" | "kusama" | "paseo" |
- *  "summit" | "devnet"), each with a full preset descriptor set (asset-hub +
- *  bulletin + individuality). This list is the subset the app deliberately
- *  ships; the mainnets are intentionally omitted. */
-export const ENVIRONMENTS = ["paseo", "summit", "devnet"] as const;
+/** Networks this build can target. Each has a full descriptor set
+ *  (asset-hub + bulletin + individuality) wired through the Product SDK, and
+ *  `CloudStorageClient` only knows these - so this is the usable universe, a
+ *  subset of the SDK's wider "polkadot" | "kusama" | "paseo" | "devnet".
+ *  `summit` was retired upstream (descriptors 0.8.0 dropped it); `devnet` (the
+ *  Polkadot Community Foundation products devnet on the Paseo testnet system
+ *  chains - Asset Hub para 1000) was added alongside `paseo` (Paseo Next v2). */
+export const ENVIRONMENTS = ["paseo", "devnet"] as const;
 export type Environment = (typeof ENVIRONMENTS)[number];
 
 /** Single source of truth for which network the whole app targets — Asset Hub,
  *  Bulletin, and the People chain move together. Set at BUILD time via
  *  VITE_ENVIRONMENT (Vite inlines it). Unset (local dev, tsx scripts, current
- *  CI) → "summit" — this is a Summit-only fork, so the default never targets
- *  Paseo. An explicitly-set unknown value is a build-config mistake and throws
- *  loudly here rather than silently shipping the wrong chain — caught at build /
- *  preview / smoke-test, never in prod. */
+ *  CI) → "paseo", unchanged from before. An explicitly-set unknown value is a
+ *  build-config mistake and throws loudly here rather than silently shipping
+ *  the wrong chain — caught at build / preview / smoke-test, never in prod. */
 function resolveEnvironment(): Environment {
   const raw = env.VITE_ENVIRONMENT?.trim().toLowerCase();
   if (!raw) return "paseo";

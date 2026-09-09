@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { ok, type Result } from "@parity/result";
 import { render, cleanup, waitFor } from "@testing-library/react";
 
 // Mock surface MUST be set BEFORE importing the module under test:
@@ -48,7 +49,7 @@ vi.mock("./contracts.ts", () => ({
 // `vi.hoisted` puts the value on the same hoist level so the factory
 // can read it AND the tests can reprogram it per-case.
 const { fetchBytesSpy } = vi.hoisted(() => ({
-  fetchBytesSpy: vi.fn<(cid: string) => Promise<Uint8Array>>(),
+  fetchBytesSpy: vi.fn<(cid: string) => Promise<Result<Uint8Array, unknown>>>(),
 }));
 
 vi.mock("@parity/product-sdk-cloud-storage", () => ({
@@ -99,7 +100,7 @@ describe("useIconUrl", () => {
     // hook re-renders with the URL. The waitFor handles the async
     // state-update — the hook doesn't return the URL synchronously since
     // the fetch is in a useEffect.
-    fetchBytesSpy.mockResolvedValueOnce(new Uint8Array([1, 2, 3]));
+    fetchBytesSpy.mockResolvedValueOnce(ok(new Uint8Array([1, 2, 3])));
 
     const { getByTestId } = render(<Sentinel cid="bafk-happy" />);
     await waitFor(() => {
@@ -135,7 +136,7 @@ describe("useIconUrl", () => {
     // not re-fetch — Bulletin reads are expensive. Catches the
     // regression where the cache key changes (e.g. someone keys on
     // `${cid}-${something}` accidentally) and every cache lookup misses.
-    fetchBytesSpy.mockResolvedValue(new Uint8Array([1, 2, 3]));
+    fetchBytesSpy.mockResolvedValue(ok(new Uint8Array([1, 2, 3])));
 
     const { getByTestId, unmount } = render(<Sentinel cid="bafk-cached" />);
     await waitFor(() => {
@@ -161,7 +162,7 @@ describe("useIconUrl", () => {
     // Two different cids → two fetchBytes calls, two distinct URLs.
     // Catches the regression where cache keys collide across cids
     // (the cache lookup would return the wrong icon for cid B).
-    fetchBytesSpy.mockResolvedValue(new Uint8Array([1]));
+    fetchBytesSpy.mockResolvedValue(ok(new Uint8Array([1])));
 
     const a = render(<Sentinel cid="bafk-aaa" />);
     await waitFor(() => {
@@ -194,7 +195,7 @@ describe("useIconUrl", () => {
     // chain reaching fetchBytes before unmounting, otherwise resolveFetch
     // is never captured and the test races itself.
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    let resolveFetch: ((bytes: Uint8Array) => void) | undefined;
+    let resolveFetch: ((r: Result<Uint8Array, unknown>) => void) | undefined;
     fetchBytesSpy.mockImplementationOnce(
       () => new Promise((resolve) => { resolveFetch = resolve; }),
     );
@@ -209,7 +210,7 @@ describe("useIconUrl", () => {
 
     // Unmount BEFORE resolving — simulates user navigating away mid-fetch.
     unmount();
-    resolveFetch!(new Uint8Array([1, 2, 3]));
+    resolveFetch!(ok(new Uint8Array([1, 2, 3])));
     // Give the (now no-op) resolution a microtask to land.
     await new Promise((r) => setTimeout(r, 0));
 
