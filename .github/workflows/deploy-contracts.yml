@@ -143,7 +143,7 @@ jobs:
             # that must be MAPPED on PolkaVM, or they revert AccountUnmapped. Set
             # cdm's account to the deploy key and ensure it's mapped before any
             # cdm read/deploy on w3s. Idempotent (5Fk8 is already mapped on-chain).
-            - name: Map cdm deploy account (Summit read/deploy origin)
+            - name: Map cdm deploy account (devnet read/deploy origin)
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
               run: |
@@ -207,7 +207,7 @@ jobs:
             # pallet-revive mapping-free query fallback — which is fork-only and
             # not in any release, so install.sh never gets it. The fork cdm runs
             # TypeScript directly via bun.
-            - name: Install PCF cdm CLI (origin-free Summit reads)
+            - name: Install PCF cdm CLI (origin-free devnet reads)
               run: |
                   set -euo pipefail
                   corepack enable
