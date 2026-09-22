@@ -72,11 +72,9 @@ jobs:
             - name: Install and build
               env:
                   # Network the build targets. Sourced from the repo-level
-                  # `ENVIRONMENT` variable (Settings → Variables) so the operative
-                  # network is controlled at the repo, with a `summit` fallback so
-                  # a missing/unset variable can never silently build Paseo — this
-                  # is a Summit-only fork. (src/config.ts also defaults to summit,
-                  # making this belt-and-suspenders.)
+                  # `ENVIRONMENT` variable (Settings → Variables), falling back to
+                  # `devnet` when unset. src/config.ts defaults to `paseo`, so the
+                  # variable must never hold `paseo` for the devnet deploy.
                   VITE_ENVIRONMENT: ${{ vars.ENVIRONMENT || 'devnet' }}
                   VITE_SENTRY_DSN: ""
                   VITE_VERSION: ${{ steps.version.outputs.version }}
@@ -97,9 +95,9 @@ jobs:
         outputs:
             domain: ${{ steps.compute.outputs.domain }}
         steps:
-            # PRs get an ephemeral preview on Summit (pr-N-playgroundtest.dot).
-            # main (workflow_run) and manual dispatch deploy production to
-            # Summit `playground.dot`. PCF CI is Summit-only.
+            # PRs get an ephemeral preview on devnet (pr-N-playgroundtest.dot).
+            # main (workflow_run) and manual dispatch deploy `playground.dot`.
+            # PCF CI is devnet-only.
             - name: Compute domain
               id: compute
               run: |
@@ -143,7 +141,7 @@ jobs:
         secrets:
             # 5Fk8… is the only Bulletin-authorized uploader, so it signs both
             # preview and production deploys (E2E_FUNDER_SEED can't upload to
-            # Summit Bulletin).
+            # devnet Bulletin).
             mnemonic: ${{ secrets.MNEMONIC }}
 
     publish-metadata:

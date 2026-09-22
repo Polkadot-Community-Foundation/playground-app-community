@@ -102,7 +102,7 @@ jobs:
           node-version: "22"
 
       - name: Install polkadot-app-deploy
-        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.16.1
+        run: npm install -g @polkadot-community-foundation/polkadot-app-deploy@0.16.6
 
       - name: Deploy to Bulletin
         id: deploy
