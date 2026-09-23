@@ -119,7 +119,7 @@ export const PLAYGROUND_DOTNS_ID = env.VITE_PLAYGROUND_DOTNS_ID ?? defaultDotNsI
 // that point at a different `install.sh`.
 export const INSTALL_CMD =
   env.VITE_INSTALL_CMD ??
-  "curl -fsSL https://raw.githubusercontent.com/paritytech/playground-cli/main/install.sh | bash";
+  "curl -fsSL https://raw.githubusercontent.com/Polkadot-Community-Foundation/playground-cli/main/install.sh | bash";
 
 // Pinned tutorial app's domain on the registry. Used by IslandPortal + AppsTab
 // to deep-link the tutorial CTA at /apps?app=<TUTORIAL_DOMAIN>. Must be a
