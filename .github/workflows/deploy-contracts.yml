@@ -30,9 +30,9 @@ on:
     workflow_dispatch:
         inputs:
             network:
-                description: "CDM network to deploy to (e.g. paseo, polkadot, local)"
+                description: "CDM network to deploy to (devnet, paseo)"
                 required: false
-                default: "paseo"
+                default: "devnet"
                 type: string
             force_cli_manifest_release:
                 description: "Also dispatch the CLI manifest release workflow even if cdm.json did not change"
@@ -57,9 +57,9 @@ permissions:
     contents: write
     pull-requests: write
 
-# Network defaults to paseo; overridable via workflow_dispatch input
+# Network defaults to devnet; overridable via workflow_dispatch input
 env:
-    CDM_NETWORK: ${{ inputs.network || 'paseo' }}
+    CDM_NETWORK: ${{ inputs.network || 'devnet' }}
 
 concurrency:
     group: deploy-contracts-${{ github.event.pull_request.number || github.ref }}
@@ -258,12 +258,13 @@ jobs:
               id: migrate-registry
               run: |
                   set -e
-                  # PCF/Summit: this fork is an orphan-history re-baseline of the
-                  # upstream snapshot, so HEAD's cdm.json does NOT carry the live
-                  # Summit registry address. Pin the prior registry explicitly to
-                  # the live @w3s/playground-registry on Summit Asset Hub so the
-                  # migration exports from the real on-chain state.
-                  OLD_ADDR=0x14C27954796575C26c85eD9BC6441522e174a0f3
+                  # Prior registry = HEAD's cdm.json (cdm deploy only rewrites the
+                  # working tree copy).
+                  OLD_ADDR=$(git show HEAD:cdm.json | node -e "
+                    const cdm = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+                    const e = (cdm.contracts || {})['@w3s/playground-registry'];
+                    if (e && e.address) process.stdout.write(e.address);
+                  ")
                   NEW_ADDR=$(node -e "
                     const cdm = require('./cdm.json');
                     // fork cdm.json is flat: contracts['@w3s/playground-registry'].address
@@ -287,18 +288,9 @@ jobs:
                   mkdir -p migration
                   SNAPSHOT="migration/snapshot-${{ github.run_id }}.json"
 
-                  # Prefer a committed seed snapshot (captured out-of-band) — the
-                  # live export of the OLD v0 registry breaks once cdm.json carries
-                  # the NEW v1 ABI (it queries v0 with the wrong ABI). Fall back to
-                  # a live export only if no seed snapshot is committed.
-                  if [ -f migration/seed-snapshot.json ]; then
-                    echo "Using committed seed snapshot (skipping live export)"
-                    SNAPSHOT=migration/seed-snapshot.json
-                  else
-                    echo "::group::Export from $OLD_ADDR"
-                    bun scripts/export-registry-state.ts --address "$OLD_ADDR" --ws wss://summit-asset-hub-rpc.polkadot.io --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
-                    echo "::endgroup::"
-                  fi
+                  echo "::group::Export from $OLD_ADDR"
+                  bun scripts/export-registry-state.ts --address "$OLD_ADDR" --origin 5Fk8FBTqBpAyBReZPse2wn8Lf4ADzdNVAsrGoNMSTxKedN8f --out "$SNAPSHOT"
+                  echo "::endgroup::"
 
                   APP_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').apps.length))")
                   PIN_COUNT=$(node -e "process.stdout.write(String(require('./${SNAPSHOT}').pinned.length))")
@@ -309,9 +301,9 @@ jobs:
                   echo "::notice::Migrated ${APP_COUNT} apps + ${PIN_COUNT} pinned from $OLD_ADDR to $NEW_ADDR"
               env:
                   MNEMONIC: ${{ secrets.MNEMONIC }}
-                  # Summit: import-registry-state.ts reads assetHubWsUrl() which
-                  # defaults to Paseo; point it at Summit Asset Hub.
-                  ASSET_HUB_WS_URL: wss://summit-asset-hub-rpc.polkadot.io
+                  # Both scripts default to Paseo Next; follow CDM_NETWORK.
+                  CHAIN: ${{ env.CDM_NETWORK }}
+                  ASSET_HUB_WS_URL: ${{ env.CDM_NETWORK == 'devnet' && 'wss://asset-hub-paseo-rpc.n.dwellir.com' || 'wss://paseo-asset-hub-next-rpc.polkadot.io' }}
 
             # Keep the snapshot as a workflow artifact so a failed import can
             # be replayed manually without re-exporting from the prior chain.
