@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Generic Observable→Promise bridge for signSubmitAndWatch. Reused by both
+// Generic Observable→Promise bridge for createSubmitAndWatch. Reused by both
 // the Bulletin store path and the pallet-revive contract calls.
 
-import type { PolkadotSigner } from "polkadot-api";
+import type { Transaction, TxCreator } from "polkadot-api";
 
 export type DeployStatus = "signing" | "broadcasting" | "in-block" | "finalized";
 
@@ -27,18 +27,11 @@ interface SubmitResult {
 }
 
 export async function submitAndWait(
-    tx: {
-        signSubmitAndWatch: (signer: PolkadotSigner) => {
-            subscribe: (observer: {
-                next: (ev: unknown) => void;
-                error: (err: unknown) => void;
-            }) => { unsubscribe: () => void };
-        };
-    },
-    signer: PolkadotSigner,
+    tx: Transaction,
+    signer: TxCreator,
     onStatus?: (status: DeployStatus) => void,
     // The dispatch outcome (ok/dispatchError) is already known at
-    // txBestBlocksState, so "inBlock" is the default — waiting for finality
+    // inBestBlock, so "inBlock" is the default — waiting for finality
     // added ~15-30s per transaction for no extra information. Every failure
     // mode past in-block (reorg drops the tx) is retryable and surfaced;
     // pass "finalized" for calls where a reorg would be unrecoverable.
@@ -46,34 +39,22 @@ export async function submitAndWait(
 ): Promise<SubmitResult> {
     return new Promise((resolve, reject) => {
         let sub: { unsubscribe: () => void } | undefined;
-        let bestBlock: { hash: string; number: number } | undefined;
 
         onStatus?.("signing");
 
-        sub = tx.signSubmitAndWatch(signer).subscribe({
-            next: (raw: unknown) => {
-                const ev = raw as {
-                    type: string;
-                    found?: boolean;
-                    ok?: boolean;
-                    dispatchError?: unknown;
-                    block?: { hash: string; number: number; index: number };
-                };
-
+        sub = tx.createSubmitAndWatch(signer).subscribe({
+            next: (ev) => {
                 if (ev.type === "broadcasted") onStatus?.("broadcasting");
 
-                if (ev.type === "txBestBlocksState" && ev.found && ev.block) {
-                    if (ev.ok === false || ev.dispatchError) {
+                if (ev.type === "inBestBlock") {
+                    if (!ev.ok) {
                         sub?.unsubscribe();
-                        const info = ev.dispatchError
-                            ? JSON.stringify(ev.dispatchError, (_, v) =>
-                                  typeof v === "bigint" ? String(v) : v,
-                              )
-                            : "Transaction included but dispatch failed";
+                        const info = JSON.stringify(ev.dispatchError, (_, v) =>
+                            typeof v === "bigint" ? String(v) : v,
+                        );
                         reject(new Error(`Transaction failed: ${info}`));
                         return;
                     }
-                    bestBlock = { hash: ev.block.hash, number: ev.block.number };
                     onStatus?.("in-block");
                     if (waitFor === "inBlock") {
                         sub?.unsubscribe();
@@ -83,7 +64,7 @@ export async function submitAndWait(
 
                 if (ev.type === "finalized") {
                     sub?.unsubscribe();
-                    if (ev.dispatchError) {
+                    if (!ev.ok) {
                         const info = JSON.stringify(ev.dispatchError, (_, v) =>
                             typeof v === "bigint" ? String(v) : v,
                         );
@@ -91,15 +72,7 @@ export async function submitAndWait(
                         return;
                     }
                     onStatus?.("finalized");
-                    resolve({
-                        blockHash: ev.block?.hash ?? bestBlock?.hash ?? "",
-                        blockNumber: ev.block?.number ?? bestBlock?.number ?? 0,
-                    });
-                }
-
-                if (ev.type === "invalid" || ev.type === "dropped") {
-                    sub?.unsubscribe();
-                    reject(new Error(`Transaction ${ev.type}`));
+                    resolve({ blockHash: ev.block.hash, blockNumber: ev.block.number });
                 }
             },
             error: (err: unknown) => {

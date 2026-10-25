@@ -127,15 +127,11 @@ function hexAddrToBytes20(addr: string): Uint8Array {
 /**
  * Normalize whatever shape the SDK returns for a `bytes32` / `[u8;32]` value
  * into lowercase 0x hex. The product-sdk-contracts type mapping decodes
- * `bytes32` as a hex string, but be defensive: also accept a FixedSizeBinary
- * (`.asHex()`) or a raw Uint8Array.
+ * `bytes32` as a hex string, but be defensive: also accept a raw Uint8Array.
  */
 function normHex32(v: unknown): string {
   if (typeof v === "string") return v.toLowerCase();
   if (v instanceof Uint8Array) return bytesToHex(v).toLowerCase();
-  if (v && typeof (v as { asHex?: () => string }).asHex === "function") {
-    return (v as { asHex: () => string }).asHex().toLowerCase();
-  }
   return String(v).toLowerCase();
 }
 

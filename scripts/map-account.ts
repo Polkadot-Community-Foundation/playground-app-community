@@ -33,7 +33,7 @@ import { getWsProvider } from "polkadot-api/ws";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { ss58Address as encodeSs58 } from "@polkadot-labs/hdkd-helpers";
 import { sign as sr25519Sign } from "@scure/sr25519";
-import { getPolkadotSigner } from "polkadot-api/signer";
+import { getTxCreator } from "polkadot-api/tx-creator";
 import { deriveH160 } from "@parity/product-sdk-address";
 import { assetHubWsUrl, deriveProductAccount } from "./_lib.ts";
 
@@ -57,7 +57,7 @@ console.log("  SS58:", ss58);
 console.log("  H160:", h160);
 console.log();
 
-const signer = getPolkadotSigner(productPublic, "Sr25519", (data) => sr25519Sign(productSecret, data));
+const signer = getTxCreator(productPublic, "Sr25519", (data) => sr25519Sign(productSecret, data));
 
 const wsUrl = assetHubWsUrl();
 console.log("Connecting to", wsUrl);
@@ -71,7 +71,7 @@ try {
     console.log("Already mapped to:", existing);
   } else {
     console.log("Submitting Revive.map_account()...");
-    const result = await api.tx.Revive.map_account().signAndSubmit(signer);
+    const result = await api.tx.Revive.map_account().createAndSubmit(signer);
     console.log("Result: ok=", result.ok, "txHash=", result.txHash, "block=", result.block?.number);
     if (!result.ok) {
       console.log("dispatchError:", JSON.stringify(result.dispatchError, (_, v) =>

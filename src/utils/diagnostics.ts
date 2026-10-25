@@ -15,10 +15,9 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import * as Sentry from "@sentry/react";
-import type { PolkadotSigner } from "polkadot-api";
 import type { Result } from "@parity/result";
 import { SpanOp, isSigningRejection } from "../lib/telemetry";
-import { ensureSignerReady, signerManager } from "./contracts.ts";
+import { ensureSignerReady, signerManager, type CommonSignerTxCreator } from "./contracts.ts";
 import { stringify } from "./stringify.ts";
 
 /**
@@ -73,7 +72,7 @@ type TxPassThrough = {
 
 export async function runTx<T>(
   label: string,
-  txFn: (opts: { signer: PolkadotSigner } & TxPassThrough) => Promise<Result<T, unknown>>,
+  txFn: (opts: { signer: CommonSignerTxCreator } & TxPassThrough) => Promise<Result<T, unknown>>,
   attributes?: Record<string, string | number | boolean>,
   txOpts?: TxPassThrough,
 ): Promise<T> {

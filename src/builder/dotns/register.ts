@@ -19,7 +19,7 @@
 // currently ~6s, down from an earlier 60s).
 
 import { encodeFunctionData, decodeFunctionResult } from "viem";
-import type { PolkadotSigner } from "polkadot-api";
+import type { TxCreator } from "polkadot-api";
 import { DOTNS_CONTRACTS, NATIVE_TO_ETH_RATIO } from "../config.ts";
 import { POP_RULES_ABI, REGISTRAR_CONTROLLER_ABI, REGISTRY_ABI } from "./abis.ts";
 import { labelToFullName, namehash } from "./namehash.ts";
@@ -196,7 +196,7 @@ export async function commitDomain(params: {
     label: string;
     ownerEvmAddress: `0x${string}`;
     signerAddress: string;
-    signer: PolkadotSigner;
+    signer: TxCreator;
     onStatus?: (status: string) => void;
 }): Promise<DomainCommitment> {
     const { label, ownerEvmAddress, signerAddress, signer, onStatus } = params;
@@ -273,7 +273,7 @@ export async function commitDomain(params: {
 async function resubmitCommit(
     commitment: DomainCommitment,
     signerAddress: string,
-    signer: PolkadotSigner,
+    signer: TxCreator,
     onStatus?: (status: string) => void,
 ): Promise<void> {
     const commitData = encodeFunctionData({
@@ -309,7 +309,7 @@ async function resubmitCommit(
 export async function finishRegistration(params: {
     commitment: DomainCommitment;
     signerAddress: string;
-    signer: PolkadotSigner;
+    signer: TxCreator;
     onStatus?: (status: string) => void;
 }): Promise<void> {
     const { commitment, signerAddress, signer, onStatus } = params;
