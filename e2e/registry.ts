@@ -42,17 +42,13 @@ import { getWsProvider } from "polkadot-api/ws";
 // works inside a Polkadot Desktop/Mobile host (paritytech/product-sdk#94) and
 // throws "Host provider unavailable" from a Node CI runner.
 import { calculateCid, AsyncBulletinClient } from "@parity/product-sdk-cloud-storage";
-import { keccak256, utf8ToBytes } from "@parity/product-sdk-utils";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getTestClient } from "./chain.js";
 import { SIGNER } from "./accounts.js";
-import {
-  PLAYGROUND_REGISTRY_CONTRACT,
-  REPUTATION_CONTRACT,
-} from "../src/utils/contractManifest.js";
+import { PLAYGROUND_REGISTRY_CONTRACT } from "../src/utils/contractManifest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const cdmJsonSnapshot = JSON.parse(
@@ -91,7 +87,7 @@ async function getManager(): Promise<ContractManager> {
       defaultSigner: acct.signer,
       defaultOrigin: SIGNER.address,
       registryOrigin: SIGNER.address,
-      libraries: [PLAYGROUND_REGISTRY_CONTRACT, REPUTATION_CONTRACT],
+      libraries: [PLAYGROUND_REGISTRY_CONTRACT],
     });
   }
   return manager;
@@ -99,10 +95,6 @@ async function getManager(): Promise<ContractManager> {
 
 async function getRegistry(): Promise<Contract> {
   return (await getManager()).getContract(PLAYGROUND_REGISTRY_CONTRACT);
-}
-
-async function getReputation(): Promise<Contract> {
-  return (await getManager()).getContract(REPUTATION_CONTRACT);
 }
 
 export interface AppEntry {
@@ -307,58 +299,5 @@ export async function unpublishDomain(domain: string): Promise<void> {
     }
   } catch (err) {
     console.warn(`[e2e cleanup] unpublish '${domain}' threw: ${err}`);
-  }
-}
-
-function domainToEntity(domain: string): Uint8Array {
-  return keccak256(utf8ToBytes(domain));
-}
-
-export interface RatingMetrics {
-  average: number;
-  count: number;
-}
-
-let _contextId: Uint8Array | null = null;
-async function getContextId(): Promise<Uint8Array> {
-  if (_contextId) return _contextId;
-  const registry = await getRegistry();
-  const res = await registry.getContextId.query();
-  if (!res.success) throw new Error("Failed to get context ID");
-  _contextId = res.value as Uint8Array;
-  return _contextId;
-}
-
-export async function getRatingMetrics(domain: string): Promise<RatingMetrics | null> {
-  try {
-    const reputation = await getReputation();
-    const contextId = await getContextId();
-    const res = await reputation.getMetrics.query(contextId, domainToEntity(domain));
-    if (!res.success) return null;
-    return { average: res.value.average, count: Number(res.value.count) };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Read the SIGNER's existing rating for a domain. Returns 0 when the SIGNER
- * has not rated, or 1-5 when they have. Lets tests distinguish "the signer
- * has already rated" from "someone else has rated", which the aggregate
- * `getRatingMetrics` count cannot.
- */
-export async function getSignerRating(domain: string): Promise<number> {
-  try {
-    const reputation = await getReputation();
-    const contextId = await getContextId();
-    const res = await reputation.getRating.query(
-      contextId,
-      SIGNER.h160,
-      domainToEntity(domain),
-    );
-    if (!res.success) return 0;
-    return Number(res.value);
-  } catch {
-    return 0;
   }
 }
