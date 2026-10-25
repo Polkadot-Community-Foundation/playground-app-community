@@ -30,7 +30,7 @@ import { getWsProvider } from "polkadot-api/ws";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { ss58Address as encodeSs58 } from "@polkadot-labs/hdkd-helpers";
 import { sign as sr25519Sign } from "@scure/sr25519";
-import { getPolkadotSigner } from "polkadot-api/signer";
+import { getTxCreator } from "polkadot-api/tx-creator";
 import { assetHubWsUrl, deriveProductAccount } from "./_lib.ts";
 
 const dotNsId = process.argv[2];
@@ -49,7 +49,7 @@ console.log("Sender (product account):", ss58);
 console.log("Recipient:               ", recipient);
 console.log();
 
-const signer = getPolkadotSigner(productPublic, "Sr25519", (data) => sr25519Sign(productSecret, data));
+const signer = getTxCreator(productPublic, "Sr25519", (data) => sr25519Sign(productSecret, data));
 
 const client = createClient(getWsProvider(assetHubWsUrl()));
 const api = client.getTypedApi(paseo_asset_hub);
@@ -59,7 +59,7 @@ try {
   const dest = { type: "Id" as const, value: recipient };
   const value = 1_000_000n; // 0.0000001 PAS — minimum-meaningful test
   console.log("Submitting transfer_keep_alive...");
-  const result = await api.tx.Balances.transfer_keep_alive({ dest, value }).signAndSubmit(signer);
+  const result = await api.tx.Balances.transfer_keep_alive({ dest, value }).createAndSubmit(signer);
   console.log("Result: ok=", result.ok, "txHash=", result.txHash, "block=", result.block?.number);
   if (!result.ok) {
     console.log("dispatchError:", JSON.stringify(result.dispatchError, (_, v) =>

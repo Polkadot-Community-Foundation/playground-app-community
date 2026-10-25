@@ -21,7 +21,7 @@
 // 2 PAS storage deposit defaults are inherited from the DotNS SDK reference.
 
 import { decodeAbiParameters } from "viem";
-import { Binary, type PolkadotSigner } from "polkadot-api";
+import { Binary, type TxCreator } from "polkadot-api";
 import { getAssetHubClient } from "../chain.ts";
 import { submitAndWait, type DeployStatus } from "../submit-and-wait.ts";
 import { READ_DEADLINE_MS, SIGN_DEADLINE_MS, withDeadline } from "../../utils/deadline.ts";
@@ -120,7 +120,7 @@ export async function isAccountMapped(signerAddress: string): Promise<boolean> {
 
 export async function ensureAccountMapped(
     signerAddress: string,
-    signer: PolkadotSigner,
+    signer: TxCreator,
 ): Promise<void> {
     if (mappedAccounts.has(signerAddress)) return;
 
@@ -294,7 +294,7 @@ export function assertDryRunOk(
 
 export async function submitContractCall(
     contractAddress: string,
-    signer: PolkadotSigner,
+    signer: TxCreator,
     encodedData: `0x${string}`,
     value: bigint = 0n,
     gasEstimate?: { refTime: bigint; proofSize: bigint },

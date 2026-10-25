@@ -32,7 +32,6 @@ import {
 } from "@parity/product-sdk-signer";
 import { getAccountsProvider, requestResourceAllocation } from "@parity/product-sdk-host";
 import { unwrapOk } from "@parity/result";
-import type { PolkadotSigner } from "polkadot-api";
 import { Enum } from "polkadot-api";
 import { keccak256, utf8ToBytes, bytesToHex } from "@parity/product-sdk-utils";
 import { deriveH160, ss58Decode, toGenericSs58 } from "@parity/product-sdk-address";
@@ -405,7 +404,11 @@ async function ensureReviveMapped(account: SignerAccount): Promise<void> {
       mapAttempted = false;
       return;
     }
-    const result = await ah.tx.Revive.map_account().signAndSubmit(rawSigner);
+    // The devnet Asset Hub descriptor types RestrictOrigins as required; `false`
+    // is the value the signer fills in when it is left out.
+    const result = await ah.tx.Revive.map_account().createAndSubmit(rawSigner, {
+      customSignedExtensions: { RestrictOrigins: { value: false } },
+    });
     console.info(
       `[playground] Revive.map_account() submitted: ${stringify(result)}`,
     );
@@ -603,9 +606,9 @@ async function requestProductPermissions(account: SignerAccount): Promise<void> 
   let result;
   try {
     result = await requestResourceAllocationBounded([
-      // truapi 0.6 typed the derivation index as a tagged union; `Left(0)`
-      // is the plain account-index form the host expands to the 32-byte index.
-      { tag: "SmartContractAllowance", value: { tag: "Left", value: 0 } },
+      // The derivation index is a tagged union; `Index(0)` is the plain
+      // account-index form the host expands to the 32-byte index.
+      { tag: "SmartContractAllowance", value: { tag: "Index", value: 0 } },
     ]);
   } catch (cause) {
     // A user denial does NOT throw - `requestResourceAllocation` returns
@@ -644,9 +647,13 @@ async function requestProductPermissions(account: SignerAccount): Promise<void> 
   );
 }
 
+// The SDK's signer type lives in a package this app does not depend on
+// directly, so derive it from the signer the SDK returns.
+export type CommonSignerTxCreator = NonNullable<ReturnType<SignerManager["getSigner"]>>;
+
 /**
  * Connect (if needed) and request the SmartContractAllowance so a write
- * can proceed. Returns the PolkadotSigner for the connected account.
+ * can proceed. Returns the TxCreator for the connected account.
  *
  * Called by `runTx` so write actions trigger the host prompts; reads bypass
  * this path entirely and use the dedicated dry-run origin above.
@@ -657,8 +664,8 @@ async function requestProductPermissions(account: SignerAccount): Promise<void> 
  * earlier attempt and surface a spurious "connect failed" to the first
  * caller.
  */
-let pendingSignerReady: Promise<PolkadotSigner> | null = null;
-export function ensureSignerReady(): Promise<PolkadotSigner> {
+let pendingSignerReady: Promise<CommonSignerTxCreator> | null = null;
+export function ensureSignerReady(): Promise<CommonSignerTxCreator> {
   if (pendingSignerReady) return pendingSignerReady;
   pendingSignerReady = (async () => {
     let account = signerManager.getState().selectedAccount;
@@ -678,7 +685,7 @@ export function ensureSignerReady(): Promise<PolkadotSigner> {
     await ensureChainSubmitPermission();
     await requestProductPermissions(account);
     const signer = signerManager.getSigner();
-    if (!signer) throw new Error("Signer connected without a usable PolkadotSigner");
+    if (!signer) throw new Error("Signer connected without a usable TxCreator");
     return signer;
   })().finally(() => {
     pendingSignerReady = null;
@@ -803,9 +810,9 @@ async function requestAllAllowances(): Promise<void> {
     // logged in the catch below.
     result = await requestResourceAllocationBounded([
       { tag: "BulletinAllowance", value: undefined },
-      // truapi 0.6 typed the derivation index as a tagged union; `Left(0)`
-      // is the plain account-index form the host expands to the 32-byte index.
-      { tag: "SmartContractAllowance", value: { tag: "Left", value: 0 } },
+      // The derivation index is a tagged union; `Index(0)` is the plain
+      // account-index form the host expands to the 32-byte index.
+      { tag: "SmartContractAllowance", value: { tag: "Index", value: 0 } },
     ]);
   } catch (cause) {
     console.warn(`[playground] requestResourceAllocation(batched) threw: ${stringify(cause)}`);
