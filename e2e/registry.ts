@@ -83,12 +83,14 @@ async function getManager(): Promise<ContractManager> {
     // the on-chain CDM meta-registry on boot — we do the same here. Strict
     // fail: if the live resolution rejects we want the test run to surface
     // it, not silently fall back to a stale snapshot address.
-    manager = await ContractManager.fromLive(cdmJsonSnapshot, runtime, {
+    const managerResult = await ContractManager.fromLive(cdmJsonSnapshot, runtime, {
       defaultSigner: acct.signer,
       defaultOrigin: SIGNER.address,
       registryOrigin: SIGNER.address,
       libraries: [PLAYGROUND_REGISTRY_CONTRACT],
     });
+    if (!managerResult.ok) throw managerResult.error;
+    manager = managerResult.value;
   }
   return manager;
 }
