@@ -48,7 +48,7 @@ export default defineConfig({
       // PublishModal state machine. Excluding it from chromium-reads (and
       // it's already absent from chromium-writes' testMatch) means it
       // doesn't run anywhere.
-      testIgnore: /(mobile-smoke|mobile-signer(-login-reject)?|publish|unpublish|rate|my-apps|events|builder-deploy)\.spec\.ts/,
+      testIgnore: /(mobile-smoke|mobile-signer(-login-reject)?|publish|unpublish|my-apps|events|builder-deploy)\.spec\.ts/,
     },
     {
       // Write tests — sign with the funder, must serialize. Single funder
@@ -60,7 +60,7 @@ export default defineConfig({
       // builder-deploy: tier 1 (preflight) is read-only, but tier 2 (the
       // E2E_BUILDER_DEPLOY=1 paid deploy) writes — route the whole spec here
       // so the paid tier can never race the funder's nonce serialization.
-      testMatch: /(unpublish|rate|my-apps|events|builder-deploy)\.spec\.ts/,
+      testMatch: /(unpublish|my-apps|events|builder-deploy)\.spec\.ts/,
     },
     {
       // Mobile-signer tests — exercise the RFC-0009 login flow, post-login
