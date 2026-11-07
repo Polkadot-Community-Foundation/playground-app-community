@@ -20,10 +20,13 @@
 // as a production fallback for users who show up with no account.
 
 import { useMemo } from "react";
-import type { PolkadotSigner } from "polkadot-api";
 import { ss58Encode, truncateAddress } from "@parity/product-sdk-address";
 import { createDevSigner, getDevPublicKey } from "@parity/product-sdk-tx";
-import { ensureSignerReady, useSignerState } from "../utils/contracts.ts";
+import {
+  ensureSignerReady,
+  useSignerState,
+  type CommonSignerTxCreator,
+} from "../utils/contracts.ts";
 import { withDeadline, SIGN_DEADLINE_MS } from "../utils/deadline.ts";
 
 export type AccountSource = "host" | "dev";
@@ -33,7 +36,7 @@ export interface ActiveAccount {
   source: AccountSource;
   address: string;
   displayName: string;
-  signer: PolkadotSigner;
+  signer: CommonSignerTxCreator;
 }
 
 const DEV_ACCOUNT_NAME = "Bob";

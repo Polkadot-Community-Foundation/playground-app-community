@@ -18,7 +18,7 @@
 // registered `<label>.dot` node to the CID stored on Bulletin.
 
 import { decodeFunctionResult, encodeFunctionData } from "viem";
-import type { PolkadotSigner } from "polkadot-api";
+import type { TxCreator } from "polkadot-api";
 import { encode as encodeContentHash } from "@ensdomains/content-hash";
 import { DOTNS_CONTRACTS } from "../config.ts";
 import { CONTENT_RESOLVER_ABI } from "./abis.ts";
@@ -72,7 +72,7 @@ export async function setContentHash(params: {
     label: string;
     cidString: string;
     signerAddress: string;
-    signer: PolkadotSigner;
+    signer: TxCreator;
     onStatus?: (status: string) => void;
 }): Promise<void> {
     const { label, cidString, signerAddress, signer, onStatus } = params;

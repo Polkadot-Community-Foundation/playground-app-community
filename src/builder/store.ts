@@ -34,7 +34,7 @@ import {
 import { getPreimageManager } from "@parity/product-sdk-host";
 import { unwrapOk } from "@parity/result";
 import { ensurePreimagePermission } from "../utils/hostPermissions.ts";
-import type { PolkadotSigner } from "polkadot-api";
+import type { CommonSignerTxCreator } from "../utils/contracts.ts";
 import { CHAIN } from "../config.ts";
 import { BULLETIN_GATEWAY } from "./config.ts";
 import { READ_DEADLINE_MS, SUBMIT_DEADLINE_MS, withDeadline } from "../utils/deadline.ts";
@@ -63,7 +63,7 @@ export interface AuthCheck {
 // The lazy signer resolves the account of the in-flight store. Only one
 // account is ever active in the builder at a time, and stores within one
 // upload are sequential, so a single slot is race-free in practice.
-let currentSigner: PolkadotSigner | null = null;
+let currentSigner: CommonSignerTxCreator | null = null;
 
 let clientPromise: Promise<CloudStorageClient> | null = null;
 function getBuilderBulletinClient(): Promise<CloudStorageClient> {
@@ -89,7 +89,7 @@ function getBuilderBulletinClient(): Promise<CloudStorageClient> {
 // progress UI already understands (see stepForUploadStatus in BuilderApp).
 function statusFor(event: ProgressEvent): DeployStatus | null {
   switch (event.type) {
-    case TxStatus.Signed:
+    case TxStatus.Created:
       return "signing";
     case TxStatus.Broadcasted:
       return "broadcasting";
@@ -134,7 +134,7 @@ export async function checkBulletinAuthorization(address: string): Promise<AuthC
 
 export async function storeBytes(params: {
   bytes: Uint8Array;
-  signer: PolkadotSigner;
+  signer: CommonSignerTxCreator;
   label?: string;
   /**
    * Host accounts route through the host's preimage submission (RFC-0002):
@@ -241,7 +241,7 @@ export async function storeBytes(params: {
 
 export async function storeHTML(params: {
   html: string;
-  signer: PolkadotSigner;
+  signer: CommonSignerTxCreator;
   viaHost?: boolean;
   onStatus?: (status: DeployStatus | string) => void;
 }): Promise<StoreHTMLResult> {
