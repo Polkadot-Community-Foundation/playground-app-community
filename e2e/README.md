@@ -45,7 +45,7 @@ The metadata template lives at `e2e/fixture-metadata.json`. Detail tests assert 
 
 Caveat: the first publish requires the SIGNER to be a funded, h160-mapped account. Locally (with the //Alice fallback), this can't succeed — Alice's balance is too unreliable. Rely on CI to do the initial publish; once it's on-chain, local runs find it and read tests work.
 
-Write tests (`rate.spec.ts`, `my-apps.spec.ts`, `events.spec.ts`, `unpublish.spec.ts`, `mobile-signer.spec.ts`) require the funded SIGNER — see "Write tests — preconditions" below.
+Write tests (`my-apps.spec.ts`, `events.spec.ts`, `unpublish.spec.ts`, `mobile-signer.spec.ts`) require the funded SIGNER — see "Write tests — preconditions" below.
 
 ## What's covered
 
@@ -57,7 +57,6 @@ Desktop project (`chromium`):
 | `detail.spec.ts`        | active (8)          | Opens via card click, closes via close button, closes via backdrop, exact name + description + repo (visible text + data-href), readme renders to HTML (asserts `<h1>` and rejects raw markdown), exact `dot mod` command, exact `https://` href + `target="_blank"` + `rel="noopener noreferrer"`, exact tag |
 | `a11y.spec.ts`          | active (1) + skip (1) | Home grid passes axe-core (no serious/critical violations). Detail panel skipped — surfaces a known colour-contrast issue on `--color-text-tertiary` (#57534e on #161412 = 2.4:1, WCAG AA needs 4.5:1) |
 | `events.spec.ts`        | active (1)          | Server-side publish surfaces in the recents grid via the iframe's event subscription, no reload — catches regressions in `Published` event wiring that the my-apps reload-then-assert flow would mask |
-| `rate.spec.ts`          | active (1)          | Submitting 5 stars records the SIGNER's per-rater rating as 5 (deterministic regardless of prior raters). Covers the current `@mock/reputation` mechanic — superseded by stars when backlog #1 ships. |
 | `mobile-signer.spec.ts` | active (6)          | Mobile signer flow via the test SDK's RFC-0009 helpers: login success, login reject, post-login signing (rates fixture, asserts signing log), permission rejection during signing, mid-session disconnect, reconnect after disconnect. Mocks login outcomes; the actual QR/PoP attestation is not exercised (needs a real phone). |
 | `my-apps.spec.ts`       | active (4)          | Connected account text is a registry username or deterministic generated fallback, never the raw wallet label/H160; publish button is hidden for non-admins (admin gate from PR #163); freshly published domain appears in My Apps grid; visibility toggle to Private removes from recents + keeps in My Apps with "Private" badge; toggle back to Public restores. The visibility-toggle tests were previously `test.fixme`'d under a "descriptors out of sync" diagnosis (PR #142, closed) — re-enabled here after fixing the productAccounts wiring root cause. |
 | `unpublish.spec.ts`     | active (1)          | Contract-level publish → unpublish → re-publish cycle on a throwaway domain. Verifies the entry is gone after `unpublish` and that re-publishing surfaces fresh metadata — catches regressions in `Mapping::remove` storage clearing (the bug fixed in `cargo-pvm-contract` PR #64). |
@@ -106,7 +105,7 @@ The reference spec describes features that don't exist in the current app. We de
 
 ## Write tests — preconditions
 
-Write tests (`rate.spec.ts`, `my-apps.spec.ts`, `events.spec.ts`, `unpublish.spec.ts`, `mobile-signer.spec.ts`) need:
+Write tests (`my-apps.spec.ts`, `events.spec.ts`, `unpublish.spec.ts`, `mobile-signer.spec.ts`) need:
 
 1. `E2E_FUNDER_SEED` set — CI uses the GitHub Actions secret of the same name; locally, `export E2E_FUNDER_SEED=<seed>` in your shell before running.
 2. A funded funder account on Paseo Asset Hub — balance ≥ 10 PAS comfortably covers tx fees + storage deposits across the suite.
